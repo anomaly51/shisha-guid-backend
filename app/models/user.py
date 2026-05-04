@@ -1,12 +1,15 @@
 import uuid
-from sqlalchemy import Column, String
-from sqlalchemy.dialects.postgresql import UUID
+
+from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.core.database import Base
+
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    google_id = Column(String, unique=True, nullable=False, index=True)
-    email = Column(String, unique=True, nullable=False, index=True)
-    name = Column(String, nullable=True)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    google_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
