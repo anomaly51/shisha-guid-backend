@@ -127,7 +127,6 @@ class BowlSetup(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # ORM Relationships
     creator: Mapped["User"] = relationship("User")
     bowl: Mapped["Bowl"] = relationship("Bowl")
     kaloud: Mapped["Kaloud"] = relationship("Kaloud")
@@ -135,7 +134,6 @@ class BowlSetup(Base):
     coal_placement: Mapped["CoalPlacement"] = relationship("CoalPlacement")
     bowl_setup_type: Mapped["BowlSetupType"] = relationship("BowlSetupType")
 
-    # Связь Many-to-Many с табаками через объект-ассоциацию (учитываем percentage)
     tobaccos: Mapped[list["BowlSetupTobacco"]] = relationship(
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
@@ -153,6 +151,5 @@ class BowlSetupTobacco(Base):
     )
     percentage: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # ORM Relationships
     bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="tobaccos")
     tobacco: Mapped["Tobacco"] = relationship("Tobacco")

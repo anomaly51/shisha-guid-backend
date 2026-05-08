@@ -2,8 +2,6 @@ from datetime import datetime
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 
-# --- БАЗОВЫЕ КЛАССЫ (ЧТОБЫ НЕ ПИСАТЬ ОДНО И ТО ЖЕ) ---
-
 
 class ComponentBase(BaseModel):
     name: str
@@ -21,9 +19,6 @@ class ComponentResponse(ComponentBase):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-
-
-# --- СХЕМЫ КОМПОНЕНТОВ ---
 
 
 class TobaccoCreate(ComponentCreate):
@@ -74,12 +69,9 @@ class BowlSetupTypeResponse(ComponentResponse):
     pass
 
 
-# --- СХЕМЫ ДЛЯ МИКСА (BOWL SETUP) И ТАБАКОВ В НЕМ ---
-
-
 class BowlSetupTobaccoCreate(BaseModel):
     tobacco_id: UUID4
-    percentage: int = Field(..., ge=1, le=100)  # Проверка: процент от 1 до 100
+    percentage: int = Field(..., ge=1, le=100)
 
 
 class BowlSetupTobaccoResponse(BaseModel):
@@ -102,7 +94,6 @@ class BowlSetupBase(BaseModel):
 
 
 class BowlSetupCreate(BowlSetupBase):
-    # При создании микса обязательно передаем список табаков
     tobaccos: list[BowlSetupTobaccoCreate] = Field(..., min_length=1)
 
 
@@ -110,7 +101,6 @@ class BowlSetupResponse(BowlSetupBase):
     id: UUID4
     creator_id: UUID4
     created_at: datetime
-    # При ответе отдаем информацию о вложенных табаках
     tobaccos: list[BowlSetupTobaccoResponse]
 
     model_config = ConfigDict(from_attributes=True)
