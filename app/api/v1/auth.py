@@ -35,7 +35,6 @@ async def exchange_google_token(
         token_data = token_res.json()
 
         if "error" in token_data:
-            print("❌ GOOGLE TOKEN ERROR:", token_data)
             raise HTTPException(status_code=400, detail=token_data)
 
         user_res = await client.get(
@@ -45,7 +44,6 @@ async def exchange_google_token(
         user_info = user_res.json()
 
         if "error" in user_info or "id" not in user_info:
-            print("❌ GOOGLE USERINFO ERROR:", user_info)
             raise HTTPException(status_code=400, detail=user_info)
 
     result = await db.execute(select(User).where(User.google_id == user_info["id"]))
@@ -55,7 +53,7 @@ async def exchange_google_token(
         user = User(
             google_id=user_info["id"],
             email=user_info["email"],
-            name=user_info.get("name"),
+            nickname=user_info.get("name"),
         )
         db.add(user)
         await db.commit()
