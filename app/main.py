@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.v1 import auth, profile, shisha
+from app.api.v1 import auth, bowls, coals, profile, setups, tobaccos
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.models import (
@@ -35,7 +35,12 @@ async def startup():
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
-app.include_router(shisha.router, prefix="/api/v1/shisha", tags=["shisha"])
+app.include_router(
+    tobaccos.router, prefix="/api/v1/shisha/tobaccos", tags=["shisha-tobacco"]
+)
+app.include_router(bowls.router, prefix="/api/v1/shisha/bowls", tags=["shisha-bowl"])
+app.include_router(coals.router, prefix="/api/v1/shisha", tags=["shisha-coal-kaloud"])
+app.include_router(setups.router, prefix="/api/v1/shisha", tags=["shisha-setups"])
 
 
 @app.get("/")
