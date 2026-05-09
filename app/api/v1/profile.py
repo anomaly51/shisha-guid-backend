@@ -20,7 +20,7 @@ async def update_profile_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    current_user.name = payload.name
+    current_user.nickname = payload.nickname
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
