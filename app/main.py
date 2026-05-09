@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 
-from app.api.v1 import auth, profile, shisha  
+from app.api.v1 import auth, profile, shisha
 from app.core.config import settings
 from app.core.database import Base, engine
-
 from app.models import (
     Bowl,
     BowlSetup,
@@ -35,9 +34,7 @@ async def startup():
 
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(
-    profile.router, prefix="/api/v1/profile", tags=["profile"]
-) 
+app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
 app.include_router(shisha.router, prefix="/api/v1/shisha", tags=["shisha"])
 
 
