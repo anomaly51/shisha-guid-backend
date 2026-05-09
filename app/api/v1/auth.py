@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -7,29 +7,35 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.models.user import User
-from app.schemas.auth import GoogleTokenRequest, TokenResponse
 
 router = APIRouter()
 
 
-@router.post("/google/token", response_model=TokenResponse)
+@router.post("/google/token")
 async def exchange_google_token(
-    payload: GoogleTokenRequest,
+    grant_type: str = Form(...),
+    code: str = Form(...),
+    client_id: str = Form(None),
+    redirect_uri: str = Form(...),
+    code_verifier: str = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     async with httpx.AsyncClient() as client:
-        token_res = await client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": payload.client_id,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "code": payload.code,
-                "grant_type": "authorization_code",
-                "redirect_uri": payload.redirect_uri,
-            },
-        )
+        data = {
+            "client_id": client_id or settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
+            "code": code,
+            "grant_type": grant_type,
+            "redirect_uri": redirect_uri,
+        }
+        if code_verifier:
+            data["code_verifier"] = code_verifier
+
+        token_res = await client.post("https://oauth2.googleapis.com/token", data=data)
         token_data = token_res.json()
+
         if "error" in token_data:
+            print("❌ GOOGLE TOKEN ERROR:", token_data)
             raise HTTPException(status_code=400, detail=token_data)
 
         user_res = await client.get(
@@ -37,7 +43,9 @@ async def exchange_google_token(
             headers={"Authorization": f"Bearer {token_data['access_token']}"},
         )
         user_info = user_res.json()
+
         if "error" in user_info or "id" not in user_info:
+            print("❌ GOOGLE USERINFO ERROR:", user_info)
             raise HTTPException(status_code=400, detail=user_info)
 
     result = await db.execute(select(User).where(User.google_id == user_info["id"]))
@@ -53,10 +61,10 @@ async def exchange_google_token(
         await db.commit()
         await db.refresh(user)
 
-    return TokenResponse(
-        access_token=create_access_token(data={"sub": str(user.id)}),
-        token_type="bearer",
-    )
+    return {
+        "access_token": create_access_token(data={"sub": str(user.id)}),
+        "token_type": "bearer",
+    }
 
 
 @router.post("/logout")
