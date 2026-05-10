@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.core.storage import promote_file
 from app.models.shisha import BowlSetup, BowlSetupTobacco
 
 
@@ -22,7 +23,12 @@ async def get_by_id(db: AsyncSession, model, item_id: uuid.UUID):
 
 
 async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
-    item = model(**schema.model_dump(), creator_id=user_id)
+    data = schema.model_dump()
+    if "photo_urls" in data:
+        data["photo_urls"] = [
+            promote_file(url, model.__tablename__) for url in data["photo_urls"]
+        ]
+    item = model(**data, creator_id=user_id)
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -31,7 +37,12 @@ async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
 
 async def update_item(db: AsyncSession, model, item_id: uuid.UUID, schema):
     item = await get_by_id(db, model, item_id)
-    for key, value in schema.model_dump(exclude_unset=True).items():
+    data = schema.model_dump(exclude_unset=True)
+    if "photo_urls" in data:
+        data["photo_urls"] = [
+            promote_file(url, model.__tablename__) for url in data["photo_urls"]
+        ]
+    for key, value in data.items():
         setattr(item, key, value)
     await db.commit()
     await db.refresh(item)
@@ -65,6 +76,10 @@ async def get_setup_by_id(db: AsyncSession, item_id: uuid.UUID):
 
 async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
     data = schema.model_dump(exclude={"tobaccos"})
+    if "photo_urls" in data:
+        data["photo_urls"] = [
+            promote_file(url, BowlSetup.__tablename__) for url in data["photo_urls"]
+        ]
     setup = BowlSetup(**data, creator_id=user_id)
     db.add(setup)
     await db.flush()
@@ -83,6 +98,10 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
 async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
     setup = await get_setup_by_id(db, item_id)
     data = schema.model_dump(exclude={"tobaccos"})
+    if "photo_urls" in data:
+        data["photo_urls"] = [
+            promote_file(url, BowlSetup.__tablename__) for url in data["photo_urls"]
+        ]
     for key, value in data.items():
         setattr(setup, key, value)
     for tob in setup.tobaccos:
