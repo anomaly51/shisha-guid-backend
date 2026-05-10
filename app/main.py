@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 
-from app.api.v1 import auth, bowls, coals, profile, setups, tobaccos
+from app.api.v1 import auth, bowls, coals, profile, setups, tobaccos, upload
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.storage import init_minio
 from app.models import (
     Bowl,
     BowlSetup,
@@ -31,6 +32,7 @@ app = FastAPI(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    init_minio()
 
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
@@ -41,6 +43,7 @@ app.include_router(
 app.include_router(bowls.router, prefix="/api/v1/shisha/bowls", tags=["shisha-bowl"])
 app.include_router(coals.router, prefix="/api/v1/shisha", tags=["shisha-coal-kaloud"])
 app.include_router(setups.router, prefix="/api/v1/shisha", tags=["shisha-setups"])
+app.include_router(upload.router, prefix="/api/v1/upload", tags=["upload"])
 
 
 @app.get("/")
