@@ -6,6 +6,7 @@ class UserProfileResponse(BaseModel):
     email: str
     nickname: str | None
     google_id: str
+    role: str
 
 
 class UserProfileUpdate(BaseModel):
