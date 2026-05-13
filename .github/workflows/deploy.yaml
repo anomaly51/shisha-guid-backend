@@ -12,7 +12,7 @@ jobs:
       - name: Telegram - CI Start
         run: |
           curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-1001800810778" \
+          -d chat_id="-5153526231" \
           -d text="⏳ [CI/CD] Началась сборка Docker-образа shisha-backend..."
 
       - name: Checkout code
@@ -36,12 +36,12 @@ jobs:
         if: success()
         run: |
           curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-1001800810778" \
+          -d chat_id="-5153526231" \
           -d text="✅ [CI/CD] Образ успешно собран и запушен в Harbor. FluxCD начал синхронизацию..."
 
       - name: Telegram - CI Failed
         if: failure()
         run: |
           curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-1001800810778" \
+          -d chat_id="-5153526231" \
           -d text="❌ [CI/CD] Ошибка при сборке или пуше образа!"
