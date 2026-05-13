@@ -9,6 +9,12 @@ jobs:
   build:
     runs-on: anomaly51-runner
     steps:
+      - name: Telegram - CI Start
+        run: |
+          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
+          -d chat_id="-1001800810778" \
+          -d text="⏳ [CI/CD] Началась сборка Docker-образа shisha-backend..."
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -25,3 +31,17 @@ jobs:
           context: .
           push: true
           tags: harbor.api-api-api.com/shisha/backend:main-${{ github.run_number }}-${{ github.sha }}
+
+      - name: Telegram - CI Success
+        if: success()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
+          -d chat_id="-1001800810778" \
+          -d text="✅ [CI/CD] Образ успешно собран и запушен в Harbor. FluxCD начал синхронизацию..."
+
+      - name: Telegram - CI Failed
+        if: failure()
+        run: |
+          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
+          -d chat_id="-1001800810778" \
+          -d text="❌ [CI/CD] Ошибка при сборке или пуше образа!"
