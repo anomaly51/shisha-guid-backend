@@ -39,7 +39,7 @@ async def update_coal(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return await crud.update_item(db, Coal, item_id, item)
+    return await crud.update_item_for_user(db, Coal, item_id, item, user)
 
 
 @router.delete("/coals/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -48,7 +48,7 @@ async def delete_coal(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await crud.delete_item(db, Coal, item_id)
+    await crud.delete_item_for_user(db, Coal, item_id, user)
 
 
 @router.get("/kalouds", response_model=list[KaloudResponse])
@@ -79,7 +79,7 @@ async def update_kaloud(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return await crud.update_item(db, Kaloud, item_id, item)
+    return await crud.update_item_for_user(db, Kaloud, item_id, item, user)
 
 
 @router.delete("/kalouds/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -88,4 +88,4 @@ async def delete_kaloud(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await crud.delete_item(db, Kaloud, item_id)
+    await crud.delete_item_for_user(db, Kaloud, item_id, user)

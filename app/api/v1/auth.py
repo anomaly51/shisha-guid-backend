@@ -11,18 +11,26 @@ from app.models.user import User
 router = APIRouter()
 
 
+def _is_configured_admin(email: str):
+    admin_emails = {
+        configured_email.strip().lower()
+        for configured_email in settings.ADMIN_EMAILS.split(",")
+        if configured_email.strip()
+    }
+    return email.lower() in admin_emails
+
+
 @router.post("/google/token")
 async def exchange_google_token(
     grant_type: str = Form(...),
     code: str = Form(...),
-    client_id: str = Form(None),
     redirect_uri: str = Form(...),
     code_verifier: str = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     async with httpx.AsyncClient() as client:
         data = {
-            "client_id": client_id or settings.GOOGLE_CLIENT_ID,
+            "client_id": settings.GOOGLE_CLIENT_ID,
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
             "code": code,
             "grant_type": grant_type,
@@ -54,10 +62,27 @@ async def exchange_google_token(
             google_id=user_info["id"],
             email=user_info["email"],
             nickname=user_info.get("name"),
+            avatar_url=user_info.get("picture"),
+            role="admin" if _is_configured_admin(user_info["email"]) else "user",
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    else:
+        changed = False
+        if not user.avatar_url and user_info.get("picture"):
+            user.avatar_url = user_info.get("picture")
+            changed = True
+        if _is_configured_admin(user.email) and user.role != "admin":
+            user.role = "admin"
+            changed = True
+        if changed:
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+
+    if user.is_banned:
+        raise HTTPException(status_code=403, detail="User account is banned")
 
     return {
         "access_token": create_access_token(data={"sub": str(user.id)}),

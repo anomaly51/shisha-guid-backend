@@ -39,7 +39,7 @@ async def update_bowl(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return await crud.update_item(db, Bowl, item_id, item)
+    return await crud.update_item_for_user(db, Bowl, item_id, item, user)
 
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -48,4 +48,4 @@ async def delete_bowl(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await crud.delete_item(db, Bowl, item_id)
+    await crud.delete_item_for_user(db, Bowl, item_id, user)

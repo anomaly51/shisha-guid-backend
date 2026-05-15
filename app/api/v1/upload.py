@@ -15,7 +15,7 @@ async def get_upload_policy(
     content_type: str,
     user: User = Depends(get_current_user),
 ):
-    if content_type not in ["image/jpeg", "image/png"]:
+    if content_type not in ["image/jpeg", "image/png", "image/gif"]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
     extension = content_type.split("/")[1]

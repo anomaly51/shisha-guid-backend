@@ -1,9 +1,10 @@
+import json
 import time
 import urllib.parse
 from datetime import datetime, timedelta
 
 from minio import Minio
-from minio.commonconfig import ENABLED, Filter
+from minio.commonconfig import ENABLED, CopySource, Filter
 from minio.datatypes import PostPolicy
 from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 
@@ -34,6 +35,22 @@ def init_minio():
                 ]
             )
             minio_client.set_bucket_lifecycle(settings.MINIO_BUCKET, config)
+            minio_client.set_bucket_policy(
+                settings.MINIO_BUCKET,
+                json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Principal": {"AWS": ["*"]},
+                                "Action": ["s3:GetObject"],
+                                "Resource": [f"arn:aws:s3:::{settings.MINIO_BUCKET}/*"],
+                            }
+                        ],
+                    }
+                ),
+            )
             break
         except Exception:
             time.sleep(3)
@@ -46,9 +63,13 @@ def generate_presigned_policy(object_name: str, content_type: str):
     policy.add_content_length_range_condition(1, 5242880)
 
     form_data = minio_client.presigned_post_policy(policy)
+    form_data["key"] = object_name
 
-    protocol = "https" if settings.MINIO_SECURE else "http"
-    url = f"{protocol}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}"
+    if settings.MINIO_PUBLIC_URL:
+        url = settings.MINIO_PUBLIC_URL.rstrip("/")
+    else:
+        protocol = "https" if settings.MINIO_SECURE else "http"
+        url = f"{protocol}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}"
 
     return url, form_data
 
@@ -72,7 +93,8 @@ def promote_file(temp_url: str, permanent_folder: str) -> str:
     minio_client.copy_object(
         settings.MINIO_BUCKET,
         new_object_path,
-        f"/{settings.MINIO_BUCKET}/{object_path}",
+        CopySource(settings.MINIO_BUCKET, object_path),
     )
+    minio_client.remove_object(settings.MINIO_BUCKET, object_path)
 
     return temp_url.replace(object_path, new_object_path)

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class Tobacco(Base):
@@ -16,6 +20,9 @@ class Tobacco(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
+    package_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -31,6 +38,9 @@ class Coal(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
+    coals_per_package: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -46,6 +56,8 @@ class Kaloud(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -61,6 +73,10 @@ class Bowl(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
+    capacity_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bowl_type: Mapped[str] = mapped_column(String, nullable=False, default="traditional")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -76,6 +92,7 @@ class CoalPlacement(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    coal_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -107,7 +124,6 @@ class BowlSetup(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
 
     creator_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id"), nullable=False
@@ -126,6 +142,7 @@ class BowlSetup(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    views_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     creator: Mapped["User"] = relationship("User")
     bowl: Mapped["Bowl"] = relationship("Bowl")
@@ -137,6 +154,39 @@ class BowlSetup(Base):
     tobaccos: Mapped[list["BowlSetupTobacco"]] = relationship(
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
+    reviews: Mapped[list["BowlSetupReview"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
+    views: Mapped[list["BowlSetupView"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
+
+    @property
+    def average_rating(self) -> float:
+        ratings = [review.rating for review in self.reviews or []]
+        return sum(ratings) / len(ratings) if ratings else 0
+
+
+class BowlSetupView(Base):
+    __tablename__ = "bowl_setup_views"
+    __table_args__ = (
+        UniqueConstraint(
+            "bowl_setup_id",
+            "ip_address",
+            name="uq_bowl_setup_view_ip",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    ip_address: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_viewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="views")
 
 
 class BowlSetupTobacco(Base):
@@ -153,3 +203,30 @@ class BowlSetupTobacco(Base):
 
     bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="tobaccos")
     tobacco: Mapped["Tobacco"] = relationship("Tobacco")
+
+
+class BowlSetupReview(Base):
+    __tablename__ = "bowl_setup_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "bowl_setup_id",
+            "creator_id",
+            name="uq_bowl_setup_review_creator",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="reviews")
+    creator: Mapped["User"] = relationship("User")

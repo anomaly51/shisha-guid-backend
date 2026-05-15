@@ -1,15 +1,19 @@
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_admin_user, get_current_user
 from app.crud import shisha as crud
 from app.models.shisha import BowlSetup, BowlSetupType, CoalPlacement
 from app.models.user import User
 from app.schemas.shisha import (
     BowlSetupCreate,
+    BowlSetupPageResponse,
+    BowlSetupReviewCreate,
+    BowlSetupReviewResponse,
     BowlSetupResponse,
     BowlSetupTypeCreate,
     BowlSetupTypeResponse,
@@ -33,7 +37,7 @@ async def get_coal_placements(db: AsyncSession = Depends(get_db)):
 async def create_coal_placement(
     item: CoalPlacementCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
     return await crud.create_item(db, CoalPlacement, item, user.id)
 
@@ -48,18 +52,18 @@ async def update_coal_placement(
     item_id: uuid.UUID,
     item: CoalPlacementCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
-    return await crud.update_item(db, CoalPlacement, item_id, item)
+    return await crud.update_item_for_user(db, CoalPlacement, item_id, item, user)
 
 
 @router.delete("/coal-placements/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_coal_placement(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
-    await crud.delete_item(db, CoalPlacement, item_id)
+    await crud.delete_item_for_user(db, CoalPlacement, item_id, user)
 
 
 @router.get("/bowl-setup-types", response_model=list[BowlSetupTypeResponse])
@@ -75,7 +79,7 @@ async def get_bowl_setup_types(db: AsyncSession = Depends(get_db)):
 async def create_bowl_setup_type(
     item: BowlSetupTypeCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
     return await crud.create_item(db, BowlSetupType, item, user.id)
 
@@ -90,23 +94,39 @@ async def update_bowl_setup_type(
     item_id: uuid.UUID,
     item: BowlSetupTypeCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
-    return await crud.update_item(db, BowlSetupType, item_id, item)
+    return await crud.update_item_for_user(db, BowlSetupType, item_id, item, user)
 
 
 @router.delete("/bowl-setup-types/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_bowl_setup_type(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_admin_user),
 ):
-    await crud.delete_item(db, BowlSetupType, item_id)
+    await crud.delete_item_for_user(db, BowlSetupType, item_id, user)
 
 
-@router.get("/bowl-setups", response_model=list[BowlSetupResponse])
-async def get_bowl_setups(db: AsyncSession = Depends(get_db)):
-    return await crud.get_all_setups(db)
+@router.get("/bowl-setups", response_model=list[BowlSetupResponse] | BowlSetupPageResponse)
+async def get_bowl_setups(
+    tobacco_ids: list[uuid.UUID] = Query(default_factory=list),
+    strength: Literal["all", "light", "medium", "strong", "heavy"] = "all",
+    sort: Literal[
+        "newest",
+        "rating",
+        "views",
+        "strengthDesc",
+        "strengthAsc",
+        "name",
+    ] = "newest",
+    limit: int | None = Query(default=None, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    if limit is not None:
+        return await crud.get_setups_page(db, tobacco_ids, strength, sort, limit, offset)
+    return await crud.get_all_setups(db, tobacco_ids, strength, sort)
 
 
 @router.post(
@@ -122,9 +142,32 @@ async def create_bowl_setup(
     return await crud.create_setup(db, item, user.id)
 
 
+def _get_client_ip(request: Request) -> str | None:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else None
+
+
 @router.get("/bowl-setups/{item_id}", response_model=BowlSetupResponse)
-async def get_bowl_setup(item_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
     return await crud.get_setup_by_id(db, item_id)
+
+
+@router.post("/bowl-setups/{item_id}/views", response_model=BowlSetupResponse)
+async def record_bowl_setup_view(
+    item_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    setup = await crud.get_setup_by_id(db, item_id)
+    return await crud.record_setup_view(db, setup, _get_client_ip(request))
 
 
 @router.patch("/bowl-setups/{item_id}", response_model=BowlSetupResponse)
@@ -134,7 +177,7 @@ async def update_bowl_setup(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return await crud.update_setup(db, item_id, item)
+    return await crud.update_setup_for_user(db, item_id, item, user)
 
 
 @router.delete("/bowl-setups/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -143,4 +186,43 @@ async def delete_bowl_setup(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await crud.delete_item(db, BowlSetup, item_id)
+    await crud.delete_item_for_user(db, BowlSetup, item_id, user)
+
+
+@router.get(
+    "/bowl-setups/{item_id}/reviews",
+    response_model=list[BowlSetupReviewResponse],
+)
+async def get_bowl_setup_reviews(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_setup_reviews(db, item_id)
+
+
+@router.post(
+    "/bowl-setups/{item_id}/reviews",
+    response_model=BowlSetupReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_bowl_setup_review(
+    item_id: uuid.UUID,
+    item: BowlSetupReviewCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.create_setup_review(db, item_id, item, user)
+
+
+@router.patch(
+    "/bowl-setups/{item_id}/reviews/{review_id}",
+    response_model=BowlSetupReviewResponse,
+)
+async def update_bowl_setup_review(
+    item_id: uuid.UUID,
+    review_id: uuid.UUID,
+    item: BowlSetupReviewCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.update_setup_review(db, item_id, review_id, item, user)

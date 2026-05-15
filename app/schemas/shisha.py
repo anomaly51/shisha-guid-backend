@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 
+from app.schemas.user import UserBadge
+
 
 class ComponentBase(BaseModel):
     name: str
@@ -21,44 +23,94 @@ class ComponentResponse(ComponentBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class TobaccoCreate(ComponentCreate):
+class PricedComponentBase(ComponentBase):
+    price: int = Field(..., ge=0)
+    price_currency: str = Field(default="UAH", pattern="^UAH$")
+
+
+class PricedComponentCreate(PricedComponentBase):
     pass
 
 
-class TobaccoResponse(ComponentResponse):
+class PricedComponentResponse(PricedComponentBase):
+    id: UUID4
+    creator_id: UUID4
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TobaccoBase(PricedComponentBase):
+    package_grams: int | None = Field(default=None, ge=1)
+
+
+class TobaccoCreate(TobaccoBase):
     pass
 
 
-class CoalCreate(ComponentCreate):
+class TobaccoResponse(TobaccoBase):
+    id: UUID4
+    creator_id: UUID4
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CoalBase(PricedComponentBase):
+    coals_per_package: int | None = Field(default=None, ge=1)
+
+
+class CoalCreate(CoalBase):
     pass
 
 
-class CoalResponse(ComponentResponse):
+class CoalResponse(CoalBase):
+    id: UUID4
+    creator_id: UUID4
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KaloudCreate(PricedComponentCreate):
     pass
 
 
-class KaloudCreate(ComponentCreate):
+class KaloudResponse(PricedComponentResponse):
     pass
 
 
-class KaloudResponse(ComponentResponse):
+class BowlBase(PricedComponentBase):
+    capacity_grams: int | None = Field(default=None, ge=1)
+    bowl_type: str = Field(default="traditional", pattern="^(traditional|phunnel)$")
+
+
+class BowlCreate(BowlBase):
     pass
 
 
-class BowlCreate(ComponentCreate):
+class BowlResponse(BowlBase):
+    id: UUID4
+    creator_id: UUID4
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CoalPlacementBase(ComponentBase):
+    coal_count: int | None = Field(default=None, ge=1)
+
+
+class CoalPlacementCreate(CoalPlacementBase):
     pass
 
 
-class BowlResponse(ComponentResponse):
-    pass
+class CoalPlacementResponse(CoalPlacementBase):
+    id: UUID4
+    creator_id: UUID4
+    created_at: datetime
 
-
-class CoalPlacementCreate(ComponentCreate):
-    pass
-
-
-class CoalPlacementResponse(ComponentResponse):
-    pass
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BowlSetupTypeCreate(ComponentCreate):
@@ -82,10 +134,20 @@ class BowlSetupTobaccoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PublicCreatorResponse(BaseModel):
+    id: UUID4
+    email: str
+    nickname: str | None = None
+    avatar_url: str | None = None
+    role: str = "user"
+    badges: list[UserBadge] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class BowlSetupBase(BaseModel):
     name: str
     description: str | None = None
-    photo_urls: list[str] = Field(default_factory=list)
     bowl_id: UUID4
     kaloud_id: UUID4
     coal_id: UUID4
@@ -100,7 +162,37 @@ class BowlSetupCreate(BowlSetupBase):
 class BowlSetupResponse(BowlSetupBase):
     id: UUID4
     creator_id: UUID4
+    creator: PublicCreatorResponse | None = None
     created_at: datetime
+    views_count: int = 0
+    average_rating: float = 0
     tobaccos: list[BowlSetupTobaccoResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BowlSetupPageResponse(BaseModel):
+    items: list[BowlSetupResponse]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BowlSetupReviewCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=10)
+    description: str = Field(..., min_length=3, max_length=2000)
+
+
+class BowlSetupReviewResponse(BaseModel):
+    id: UUID4
+    bowl_setup_id: UUID4
+    creator_id: UUID4
+    creator: PublicCreatorResponse | None = None
+    rating: int
+    description: str
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,21 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
-from app.api.v1 import auth, bowls, coals, profile, setups, tobaccos, upload
+from app.api.v1 import admin, auth, bowls, coals, profile, setups, tobaccos, upload
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.storage import init_minio
-from app.models import (
-    Bowl,
-    BowlSetup,
-    BowlSetupTobacco,
-    BowlSetupType,
-    Coal,
-    CoalPlacement,
-    Kaloud,
-    Tobacco,
-    User,
-)
+import app.models  # noqa: F401
 
 app = FastAPI(
     title="ShishaGuid API",
@@ -31,7 +22,11 @@ app = FastAPI(
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "https://shisha-guid.api-api-api.com"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://shisha-guid.api-api-api.com",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,11 +36,107 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "role VARCHAR NOT NULL DEFAULT 'user'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "is_banned BOOLEAN NOT NULL DEFAULT false"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "badges JSON NOT NULL DEFAULT '[]'"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE bowl_setups DROP COLUMN IF EXISTS photo_urls")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS "
+                "views_count INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text("UPDATE bowl_setups SET views_count = 0 WHERE views_count IS NULL")
+        )
+        await conn.execute(
+            text("ALTER TABLE bowl_setups ALTER COLUMN views_count SET DEFAULT 0")
+        )
+        await conn.execute(
+            text("ALTER TABLE bowl_setups ALTER COLUMN views_count SET NOT NULL")
+        )
+        for table_name in ("tobaccos", "coals", "kalouds", "bowls"):
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    "ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    "ADD COLUMN IF NOT EXISTS price_currency VARCHAR NOT NULL DEFAULT 'UAH'"
+                )
+            )
+            await conn.execute(text(f"UPDATE {table_name} SET price = 0 WHERE price IS NULL"))
+            await conn.execute(
+                text(
+                    f"UPDATE {table_name} "
+                    "SET price_currency = 'UAH' WHERE price_currency IS NULL"
+                )
+            )
+            await conn.execute(
+                text(f"ALTER TABLE {table_name} ALTER COLUMN price SET DEFAULT 0")
+            )
+            await conn.execute(
+                text(f"ALTER TABLE {table_name} ALTER COLUMN price SET NOT NULL")
+            )
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    "ALTER COLUMN price_currency SET DEFAULT 'UAH'"
+                )
+            )
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    "ALTER COLUMN price_currency SET NOT NULL"
+                )
+            )
+        await conn.execute(
+            text("ALTER TABLE coals ADD COLUMN IF NOT EXISTS coals_per_package INTEGER")
+        )
+        await conn.execute(
+            text("ALTER TABLE bowls ADD COLUMN IF NOT EXISTS capacity_grams INTEGER")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE bowls ADD COLUMN IF NOT EXISTS "
+                "bowl_type VARCHAR NOT NULL DEFAULT 'traditional'"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS package_grams INTEGER")
+        )
+        await conn.execute(
+            text("ALTER TABLE coal_placements ADD COLUMN IF NOT EXISTS coal_count INTEGER")
+        )
     init_minio()
 
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(
     tobaccos.router, prefix="/api/v1/shisha/tobaccos", tags=["shisha-tobacco"]
 )
