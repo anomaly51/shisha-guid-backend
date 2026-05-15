@@ -1,8 +1,10 @@
 import json
 import time
 import urllib.parse
+from io import BytesIO
 from datetime import datetime, timedelta
 
+from fastapi import HTTPException, Request, status
 from minio import Minio
 from minio.commonconfig import ENABLED, CopySource, Filter
 from minio.datatypes import PostPolicy
@@ -74,18 +76,51 @@ def generate_presigned_policy(object_name: str, content_type: str):
     return url, form_data
 
 
+def build_media_url(request: Request, object_name: str) -> str:
+    base_url = settings.API_PUBLIC_URL or str(request.base_url).rstrip("/")
+    encoded_name = "/".join(
+        urllib.parse.quote(part, safe="") for part in object_name.split("/")
+    )
+    return f"{base_url}/api/v1/upload/media/{encoded_name}"
+
+
+def upload_file(object_name: str, content_type: str, content: bytes) -> None:
+    minio_client.put_object(
+        settings.MINIO_BUCKET,
+        object_name,
+        BytesIO(content),
+        length=len(content),
+        content_type=content_type,
+    )
+
+
+def get_file(object_name: str):
+    try:
+        return minio_client.get_object(settings.MINIO_BUCKET, object_name)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+
+
+def extract_object_path(media_url: str) -> str:
+    parsed = urllib.parse.urlparse(media_url)
+    object_path = urllib.parse.unquote(parsed.path.lstrip("/"))
+
+    media_prefix = "api/v1/upload/media/"
+    if object_path.startswith(media_prefix):
+        return object_path[len(media_prefix):]
+
+    path_parts = object_path.split("/")
+    if path_parts and path_parts[0] == settings.MINIO_BUCKET:
+        return "/".join(path_parts[1:])
+
+    return object_path
+
+
 def promote_file(temp_url: str, permanent_folder: str) -> str:
     if "/temp/" not in temp_url:
         return temp_url
 
-    parsed = urllib.parse.urlparse(temp_url)
-    path_parts = parsed.path.lstrip("/").split("/")
-
-    if path_parts[0] == settings.MINIO_BUCKET:
-        object_path = "/".join(path_parts[1:])
-    else:
-        object_path = "/".join(path_parts)
-
+    object_path = extract_object_path(temp_url)
     file_name = object_path.split("/")[-1]
     user_id = object_path.split("/")[0]
     new_object_path = f"{user_id}/{permanent_folder}/{file_name}"
@@ -97,4 +132,7 @@ def promote_file(temp_url: str, permanent_folder: str) -> str:
     )
     minio_client.remove_object(settings.MINIO_BUCKET, object_path)
 
-    return temp_url.replace(object_path, new_object_path)
+    return temp_url.replace(
+        "/".join(urllib.parse.quote(part, safe="") for part in object_path.split("/")),
+        "/".join(urllib.parse.quote(part, safe="") for part in new_object_path.split("/")),
+    ).replace(object_path, new_object_path)

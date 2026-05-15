@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "shisha-guid"
     MINIO_SECURE: bool = False
     MINIO_PUBLIC_URL: str | None = None
+    API_PUBLIC_URL: str | None = None
 
     class Config:
         env_file = ".env"
