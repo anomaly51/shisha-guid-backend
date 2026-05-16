@@ -21,7 +21,7 @@ VIEW_INTERVAL = timedelta(minutes=30)
 
 
 STRENGTH_RANGES = {
-    "light": (1, 4.49),
+    "light": (0, 4.49),
     "medium": (4.5, 6.49),
     "strong": (6.5, 7.99),
     "heavy": (8, 10),
@@ -33,17 +33,24 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
 
 
 def get_tobacco_strength(tobacco) -> float:
-    explicit_value = (
-        getattr(tobacco, "strength", None)
-        or getattr(tobacco, "heaviness", None)
-        or getattr(tobacco, "nicotine_strength", None)
-        or getattr(tobacco, "nicotine", None)
+    explicit_value = next(
+        (
+            value
+            for value in (
+                getattr(tobacco, "strength", None),
+                getattr(tobacco, "heaviness", None),
+                getattr(tobacco, "nicotine_strength", None),
+                getattr(tobacco, "nicotine", None),
+            )
+            if value is not None
+        ),
+        None,
     )
     if explicit_value is not None:
         try:
             numeric = float(explicit_value)
-            if numeric > 0:
-                return _clamp(numeric, 1, 10)
+            if numeric >= 0:
+                return _clamp(numeric, 0, 10)
         except (TypeError, ValueError):
             pass
 
@@ -61,7 +68,7 @@ def get_tobacco_strength(tobacco) -> float:
     if "element" in text or "banana" in text or "milk" in text or "легк" in text:
         score -= 2
 
-    return _clamp(score, 1, 10)
+    return _clamp(score, 0, 10)
 
 
 def _matches_strength(value: float, strength: str | None) -> bool:
@@ -75,18 +82,21 @@ def _matches_strength(value: float, strength: str | None) -> bool:
 
 def get_setup_heaviness(setup: BowlSetup) -> float:
     mix = setup.tobaccos or []
+    if not mix:
+        return 5
+
     total = sum(int(item.percentage or 0) for item in mix) or 100
     value = 0.0
 
     for item in mix:
         value += get_tobacco_strength(item.tobacco) * (int(item.percentage or 0) / total)
 
-    return _clamp(value or 5, 1, 10)
+    return _clamp(value, 0, 10)
 
 
 def _setup_rating(setup: BowlSetup) -> float:
     ratings = [review.rating for review in setup.reviews or []]
-    return sum(ratings) / len(ratings) if ratings else 0
+    return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
 async def get_all(db: AsyncSession, model):

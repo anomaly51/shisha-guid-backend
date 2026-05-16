@@ -129,7 +129,17 @@ async def startup():
             text("ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS package_grams INTEGER")
         )
         await conn.execute(
+            text("ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS strength INTEGER")
+        )
+        await conn.execute(
             text("ALTER TABLE coal_placements ADD COLUMN IF NOT EXISTS coal_count INTEGER")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE bowl_setup_reviews "
+                "ALTER COLUMN rating TYPE DOUBLE PRECISION "
+                "USING rating::DOUBLE PRECISION"
+            )
         )
     init_minio()
 

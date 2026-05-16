@@ -42,6 +42,7 @@ class PricedComponentResponse(PricedComponentBase):
 
 class TobaccoBase(PricedComponentBase):
     package_grams: int | None = Field(default=None, ge=1)
+    strength: int | None = Field(default=None, ge=0, le=10)
 
 
 class TobaccoCreate(TobaccoBase):
@@ -182,7 +183,7 @@ class BowlSetupPageResponse(BaseModel):
 
 
 class BowlSetupReviewCreate(BaseModel):
-    rating: int = Field(..., ge=1, le=10)
+    rating: float = Field(..., ge=1, le=10, multiple_of=0.5)
     description: str = Field(..., min_length=3, max_length=2000)
 
 
@@ -191,7 +192,7 @@ class BowlSetupReviewResponse(BaseModel):
     bowl_setup_id: UUID4
     creator_id: UUID4
     creator: PublicCreatorResponse | None = None
-    rating: int
+    rating: float
     description: str
     created_at: datetime
 

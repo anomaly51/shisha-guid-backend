@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -23,6 +23,7 @@ class Tobacco(Base):
     price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
     package_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    strength: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
@@ -164,7 +165,7 @@ class BowlSetup(Base):
     @property
     def average_rating(self) -> float:
         ratings = [review.rating for review in self.reviews or []]
-        return sum(ratings) / len(ratings) if ratings else 0
+        return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
 class BowlSetupView(Base):
@@ -222,7 +223,7 @@ class BowlSetupReview(Base):
     creator_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    rating: Mapped[float] = mapped_column(Float, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
