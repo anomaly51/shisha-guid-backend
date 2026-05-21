@@ -7,41 +7,18 @@ on:
 
 jobs:
   build:
-    runs-on: anomaly51-runner
-    steps:
-      - name: Telegram - CI Start
-        run: |
-          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-5153526231" \
-          -d text="⏳ [CI/CD] Началась сборка Docker-образа shisha-backend..."
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Login to Harbor
-        uses: docker/login-action@v3
-        with:
-          registry: harbor.api-api-api.com
-          username: admin
-          password: admin
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: harbor.api-api-api.com/shisha/backend:main-${{ github.run_number }}-${{ github.sha }}
-
-      - name: Telegram - CI Success
-        if: success()
-        run: |
-          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-5153526231" \
-          -d text="✅ [CI/CD] Образ успешно собран и запушен в Harbor. FluxCD начал синхронизацию..."
-
-      - name: Telegram - CI Failed
-        if: failure()
-        run: |
-          curl -s -X POST https://api.telegram.org/bot8918318042:AAGDj7iLiXP4uAYEhi3rb91x4dV9VOSDe6g/sendMessage \
-          -d chat_id="-5153526231" \
-          -d text="❌ [CI/CD] Ошибка при сборке или пуше образа!"
+    uses: anomaly51/github-actions-toolkit/.github/workflows/fluxcd-image-release.yml@v8
+    with:
+      app-name: Shisha Guide Backend
+      runner: anomaly51-runner
+      concurrency-group: shisha-backend
+      registry: harbor.api-api-api.com
+      image-project: shisha
+      image-name: backend
+      app-url: https://shisha-guid-api.api-api-api.com
+      health-url: https://shisha-guid-api.api-api-api.com/health
+    secrets:
+      registry_username: ${{ secrets.HARBOR_USERNAME }}
+      registry_password: ${{ secrets.HARBOR_PASSWORD }}
+      telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
