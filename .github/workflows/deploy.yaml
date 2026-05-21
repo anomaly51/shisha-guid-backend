@@ -7,12 +7,13 @@ on:
 
 jobs:
   build:
-    uses: anomaly51/github-actions-toolkit/.github/workflows/fluxcd-image-release.yml@v9
+    uses: anomaly51/github-actions-toolkit/.github/workflows/fluxcd-image-release.yml@v10
     with:
       app-name: Shisha Guide Backend
       runner: anomaly51-runner
       concurrency-group: shisha-backend
       registry: harbor.api-api-api.com
+      registry-resolve-host: traefik.kube-system.svc.cluster.local
       image-project: shisha
       image-name: backend
       app-url: https://shisha-guid-api.api-api-api.com
