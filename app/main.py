@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.v1 import admin, auth, bowls, coals, profile, setups, tobaccos, upload
+from app.api.v1 import agent, admin, auth, bowls, coals, profile, setups, tobaccos, upload
 from app.core.config import settings
 from app.core.database import Base, engine
 from app.core.storage import init_minio
@@ -154,6 +154,7 @@ app.include_router(bowls.router, prefix="/api/v1/shisha/bowls", tags=["shisha-bo
 app.include_router(coals.router, prefix="/api/v1/shisha", tags=["shisha-coal-kaloud"])
 app.include_router(setups.router, prefix="/api/v1/shisha", tags=["shisha-setups"])
 app.include_router(upload.router, prefix="/api/v1/upload", tags=["upload"])
+app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 
 
 @app.get("/")
