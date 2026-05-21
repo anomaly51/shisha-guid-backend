@@ -38,15 +38,15 @@ AGENT_SYSTEM_PROMPT = """
 Ты чат-агент ShishaGuid для добавления забивки.
 Отвечай пользователю на русском кратко и по делу.
 Твоя задача: собрать черновик забивки из текста пользователя, сверить его с каталогом
-и попросить подтверждение перед созданием.
+и попросить проверить черновик. Самостоятельно не публикуй забивку.
 
 Правила:
 - Используй только id из переданного каталога. Не выдумывай id.
 - Если пользователь назвал сущность, выбери самый близкий элемент каталога.
 - Если нужного элемента нет в каталоге, спроси уточнение и не создавай забивку.
 - Если проценты табаков не указаны, распредели табаки поровну.
-- Создавай только после явного подтверждения пользователя: "да", "подтверждаю",
-  "создавай", "добавляй" или похожее.
+- Не возвращай action=create_setup из обычного чата. Публикация выполняется только
+  отдельной кнопкой интерфейса, не текстовым подтверждением пользователя.
 - Верни только JSON без markdown.
 
 JSON schema:
@@ -233,13 +233,20 @@ async def chat_with_setup_agent(
     user: User = Depends(get_current_user),
 ):
     catalog = await _load_catalog(db)
-    agent_result = await _ask_openrouter(request, catalog)
-    draft = _sanitize_draft(agent_result.get("draft"), catalog)
-    missing = _missing_fields(draft)
-    action = agent_result.get("action")
-    reply = str(agent_result.get("reply") or "").strip()
 
-    if action == "create_setup" and not missing:
+    if request.publish:
+        draft = _sanitize_draft(
+            request.draft.model_dump() if request.draft else None,
+            catalog,
+        )
+        missing = _missing_fields(draft)
+        if missing:
+            return AgentChatResponse(
+                reply=f"Пока нельзя опубликовать: не хватает {', '.join(missing)}.",
+                draft=draft,
+                needs_confirmation=True,
+            )
+
         setup = await crud.create_setup(
             db,
             BowlSetupCreate(
@@ -262,10 +269,16 @@ async def chat_with_setup_agent(
             user.id,
         )
         return AgentChatResponse(
-            reply=reply or f"Готово, добавил забивку «{setup.name}».",
+            reply=f"Готово, опубликовал забивку «{setup.name}».",
             draft=draft,
             created_setup_id=str(setup.id),
         )
+
+    agent_result = await _ask_openrouter(request, catalog)
+    draft = _sanitize_draft(agent_result.get("draft"), catalog)
+    missing = _missing_fields(draft)
+    action = agent_result.get("action")
+    reply = str(agent_result.get("reply") or "").strip()
 
     if missing:
         missing_text = ", ".join(missing)
@@ -273,9 +286,9 @@ async def chat_with_setup_agent(
         return AgentChatResponse(reply=reply, draft=draft)
 
     return AgentChatResponse(
-        reply=reply or "Проверь данные. Если все верно, напиши «да, добавляй».",
+        reply=reply or "Черновик собран. Проверь детали и нажми «Опубликовать», когда все верно.",
         draft=draft,
-        needs_confirmation=action == "confirm",
+        needs_confirmation=action in {"confirm", "create_setup"},
     )
 
 

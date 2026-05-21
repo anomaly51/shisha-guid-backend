@@ -33,6 +33,7 @@ class AgentSetupDraft(BaseModel):
 class AgentChatRequest(BaseModel):
     messages: list[AgentChatMessage] = Field(..., min_length=1, max_length=20)
     draft: AgentSetupDraft | None = None
+    publish: bool = False
 
 
 class AgentChatResponse(BaseModel):
