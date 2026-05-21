@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    uses: anomaly51/github-actions-toolkit/.github/workflows/fluxcd-image-release.yml@v10
+    uses: anomaly51/github-actions-toolkit/.github/workflows/fluxcd-image-release.yml@v11
     with:
       app-name: Shisha Guide Backend
       runner: anomaly51-runner
