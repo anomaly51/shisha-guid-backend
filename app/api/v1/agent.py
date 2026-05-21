@@ -37,12 +37,17 @@ REQUIRED_FIELDS = {
 AGENT_SYSTEM_PROMPT = """
 Ты чат-агент ShishaGuid для добавления забивки.
 Отвечай пользователю на русском кратко и по делу.
-Твоя задача: собрать черновик забивки из текста пользователя, сверить его с каталогом
-и попросить проверить черновик. Самостоятельно не публикуй забивку.
+Твоя задача: собрать черновик забивки из текста пользователя, сверить его с каталогом,
+обновить уже выбранные поля формы и попросить проверить черновик. Самостоятельно
+не публикуй забивку.
 
 Правила:
 - Используй только id из переданного каталога. Не выдумывай id.
 - Если пользователь назвал сущность, выбери самый близкий элемент каталога.
+- Если в current_draft уже есть выбранная чаша, калауд, уголь, расположение углей
+  или тип забивки и пользователь не просил их поменять, сохрани эти значения.
+- Уголь означает конкретный уголь из каталога coals. Расположение углей означает
+  схему/количество углей из coal_placements. Не путай эти поля.
 - Если нужного элемента нет в каталоге, спроси уточнение и не создавай забивку.
 - Если проценты табаков не указаны, распредели табаки поровну.
 - Не возвращай action=create_setup из обычного чата. Публикация выполняется только
@@ -76,7 +81,7 @@ JSON schema:
 
 async def _catalog_items(db: AsyncSession, model) -> list[dict[str, Any]]:
     result = await db.execute(
-        select(model).order_by(func.lower(model.name)).limit(CATALOG_LIMIT)
+        select(model).order_by(model.created_at, func.lower(model.name)).limit(CATALOG_LIMIT)
     )
     return [
         {
@@ -114,6 +119,20 @@ def _parse_json_object(value: str) -> dict[str, Any]:
 
 def _catalog_ids(catalog: dict[str, list[dict[str, Any]]]) -> dict[str, set[str]]:
     return {key: {item["id"] for item in items} for key, items in catalog.items()}
+
+
+def _merge_drafts(
+    base: AgentSetupDraft | None,
+    patch: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = base.model_dump() if base else {}
+    for key, value in (patch or {}).items():
+        if value is None:
+            continue
+        if key == "tobaccos" and not value:
+            continue
+        merged[key] = value
+    return merged
 
 
 def _normalize_tobaccos(draft: AgentSetupDraft, valid_ids: set[str]) -> None:
@@ -163,6 +182,31 @@ def _sanitize_draft(
             setattr(draft, field_name, None)
 
     _normalize_tobaccos(draft, ids["tobaccos"])
+    return draft
+
+
+def _fill_equipment_defaults(
+    draft: AgentSetupDraft,
+    catalog: dict[str, list[dict[str, Any]]],
+) -> AgentSetupDraft:
+    for id_field, name_field, catalog_name in (
+        ("bowl_id", "bowl_name", "bowls"),
+        ("kaloud_id", "kaloud_name", "kalouds"),
+        ("coal_id", "coal_name", "coals"),
+        ("coal_placement_id", "coal_placement_name", "coal_placements"),
+        ("bowl_setup_type_id", "bowl_setup_type_name", "bowl_setup_types"),
+    ):
+        items = catalog[catalog_name]
+        if not items:
+            continue
+
+        by_id = {item["id"]: item for item in items}
+        selected_id = getattr(draft, id_field)
+        selected = by_id.get(selected_id) if selected_id else items[0]
+
+        setattr(draft, id_field, selected["id"])
+        setattr(draft, name_field, selected["name"])
+
     return draft
 
 
@@ -239,6 +283,7 @@ async def chat_with_setup_agent(
             request.draft.model_dump() if request.draft else None,
             catalog,
         )
+        draft = _fill_equipment_defaults(draft, catalog)
         missing = _missing_fields(draft)
         if missing:
             return AgentChatResponse(
@@ -275,7 +320,8 @@ async def chat_with_setup_agent(
         )
 
     agent_result = await _ask_openrouter(request, catalog)
-    draft = _sanitize_draft(agent_result.get("draft"), catalog)
+    draft = _sanitize_draft(_merge_drafts(request.draft, agent_result.get("draft")), catalog)
+    draft = _fill_equipment_defaults(draft, catalog)
     missing = _missing_fields(draft)
     action = agent_result.get("action")
     reply = str(agent_result.get("reply") or "").strip()
