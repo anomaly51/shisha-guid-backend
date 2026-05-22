@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_optional_current_user
 from app.crud import shisha as crud
 from app.models.shisha import Bowl, BowlSetupType, Coal, CoalPlacement, Kaloud, Tobacco
 from app.models.user import User
@@ -339,11 +339,17 @@ async def _ask_openrouter(
 async def chat_with_setup_agent(
     request: AgentChatRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_current_user),
 ):
     catalog = await _load_catalog(db)
 
     if request.publish:
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to publish setup",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         draft = _sanitize_draft(
             request.draft.model_dump() if request.draft else None,
             catalog,

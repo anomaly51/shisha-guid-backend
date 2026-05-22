@@ -18,16 +18,27 @@ oauth2_scheme = OAuth2AuthorizationCodeBearer(
     }
 )
 
+optional_oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    authorizationUrl="https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl="/api/v1/auth/google/token",
+    scopes={
+        "openid": "OpenID Connect",
+        "profile": "User Profile",
+        "email": "User Email"
+    },
+    auto_error=False,
+)
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+async def _get_user_from_token(
+    token: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -55,6 +66,25 @@ async def get_current_user(
             detail="User account is banned",
         )
     return user
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _get_user_from_token(token, db)
+
+
+async def get_optional_current_user(
+    token: str | None = Depends(optional_oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    if not token:
+        return None
+    try:
+        return await _get_user_from_token(token, db)
+    except HTTPException:
+        return None
 
 
 async def get_current_admin_user(current_user: User = Depends(get_current_user)):
