@@ -42,6 +42,12 @@ AGENT_SYSTEM_PROMPT = """
 не публикуй забивку.
 
 Правила:
+- Если последнее сообщение пользователя является приветствием, small talk,
+  вопросом о возможностях чата или коротким непонятным вводом, ответь
+  разговорно и направь пользователя к описанию забивки. Не перечисляй
+  недостающие поля и не делай вид, что черновик обновлен.
+- Перечисляй недостающие поля только когда пользователь уже описывает забивку,
+  явно спрашивает что осталось выбрать или просит продолжить сборку.
 - Используй только id из переданного каталога. Не выдумывай id.
 - Если пользователь назвал сущность, выбери самый близкий элемент каталога.
 - Если в current_draft уже есть выбранная чаша, калауд, уголь, расположение углей
@@ -324,20 +330,14 @@ async def chat_with_setup_agent(
 
     agent_result = await _ask_openrouter(request, catalog)
     draft = _sanitize_draft(_merge_drafts(request.draft, agent_result.get("draft")), catalog)
-    draft = _fill_equipment_defaults(draft, catalog)
     missing = _missing_fields(draft)
     action = agent_result.get("action")
     reply = str(agent_result.get("reply") or "").strip()
 
-    if missing:
-        missing_text = ", ".join(missing)
-        reply = f"Черновик обновлен. Не хватает: {missing_text}. Напиши только это, и я дополню."
-        return AgentChatResponse(reply=reply, draft=draft)
-
     return AgentChatResponse(
-        reply=reply or "Черновик собран. Проверь детали и нажми «Опубликовать», когда все верно.",
+        reply=reply,
         draft=draft,
-        needs_confirmation=action in {"confirm", "create_setup"},
+        needs_confirmation=not missing and action in {"confirm", "create_setup"},
     )
 
 
