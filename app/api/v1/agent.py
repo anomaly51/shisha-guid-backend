@@ -55,6 +55,17 @@ AGENT_SYSTEM_PROMPT = """
 - Уголь означает конкретный уголь из каталога coals. Расположение углей означает
   схему/количество углей из coal_placements. Не путай эти поля.
 - Если нужного элемента нет в каталоге, спроси уточнение и не создавай забивку.
+- Если пользователь просит тебя выбрать всё самому, заполнить тестово, подобрать
+  любые подходящие значения или сделать демо-черновик, выбери конкретные позиции
+  из каталога для всех обязательных полей и верни их в draft. Не ограничивайся
+  текстовым описанием.
+- Если пользователь подтверждает предложенный тобой набор, верни этот набор в
+  draft как структурные поля. После подтверждения не показывай каталог заново.
+- Любой конкретный табак, чаша, калауд, уголь, раскладка или тип забивки,
+  которые ты называешь в reply как выбранные/предложенные для текущего черновика,
+  должны быть также заполнены в draft с id и name из каталога.
+- Если draft заполнен полностью, action должен быть "confirm", а reply должен
+  попросить проверить карточку черновика и нажать кнопку публикации в интерфейсе.
 - В ответе спрашивай только те поля, которых реально не хватает в черновике.
   Не предлагай заново чашу, калауд, уголь, раскладку или тип, если они уже выбраны.
   Не перечисляй весь каталог и не давай варианты "на всякий случай".
@@ -130,6 +141,26 @@ def _catalog_ids(catalog: dict[str, list[dict[str, Any]]]) -> dict[str, set[str]
     return {key: {item["id"] for item in items} for key, items in catalog.items()}
 
 
+def _normalize_text(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").casefold().replace("ё", "е")).strip()
+
+
+def _catalog_item_by_name(
+    catalog: dict[str, list[dict[str, Any]]],
+    catalog_name: str,
+    value: str | None,
+) -> dict[str, Any] | None:
+    normalized = _normalize_text(value)
+    if not normalized:
+        return None
+
+    for item in catalog[catalog_name]:
+        if _normalize_text(item["name"]) == normalized:
+            return item
+
+    return None
+
+
 def _merge_drafts(
     base: AgentSetupDraft | None,
     patch: dict[str, Any] | None,
@@ -144,12 +175,25 @@ def _merge_drafts(
     return merged
 
 
-def _normalize_tobaccos(draft: AgentSetupDraft, valid_ids: set[str]) -> None:
-    draft.tobaccos = [
-        item
-        for item in draft.tobaccos
-        if item.tobacco_id and item.tobacco_id in valid_ids
-    ]
+def _normalize_tobaccos(
+    draft: AgentSetupDraft,
+    catalog: dict[str, list[dict[str, Any]]],
+    valid_ids: set[str],
+) -> None:
+    by_id = {item["id"]: item for item in catalog["tobaccos"]}
+    normalized_tobaccos = []
+
+    for item in draft.tobaccos:
+        selected = by_id.get(item.tobacco_id) if item.tobacco_id else None
+        if not selected:
+            selected = _catalog_item_by_name(catalog, "tobaccos", item.tobacco_name)
+        if not selected or selected["id"] not in valid_ids:
+            continue
+        item.tobacco_id = selected["id"]
+        item.tobacco_name = selected["name"]
+        normalized_tobaccos.append(item)
+
+    draft.tobaccos = normalized_tobaccos
     if not draft.tobaccos:
         return
 
@@ -179,18 +223,26 @@ def _sanitize_draft(
     draft = AgentSetupDraft.model_validate(raw_draft or {})
     ids = _catalog_ids(catalog)
 
-    for field_name, catalog_name in (
-        ("bowl_id", "bowls"),
-        ("kaloud_id", "kalouds"),
-        ("coal_id", "coals"),
-        ("coal_placement_id", "coal_placements"),
-        ("bowl_setup_type_id", "bowl_setup_types"),
+    for field_name, name_field, catalog_name in (
+        ("bowl_id", "bowl_name", "bowls"),
+        ("kaloud_id", "kaloud_name", "kalouds"),
+        ("coal_id", "coal_name", "coals"),
+        ("coal_placement_id", "coal_placement_name", "coal_placements"),
+        ("bowl_setup_type_id", "bowl_setup_type_name", "bowl_setup_types"),
     ):
-        value = getattr(draft, field_name)
-        if value and value not in ids[catalog_name]:
+        by_id = {item["id"]: item for item in catalog[catalog_name]}
+        selected_id = getattr(draft, field_name)
+        selected = by_id.get(selected_id) if selected_id else None
+        if not selected:
+            selected = _catalog_item_by_name(catalog, catalog_name, getattr(draft, name_field))
+        if selected and selected["id"] in ids[catalog_name]:
+            setattr(draft, field_name, selected["id"])
+            setattr(draft, name_field, selected["name"])
+        else:
             setattr(draft, field_name, None)
+            setattr(draft, name_field, None)
 
-    _normalize_tobaccos(draft, ids["tobaccos"])
+    _normalize_tobaccos(draft, catalog, ids["tobaccos"])
     return draft
 
 
