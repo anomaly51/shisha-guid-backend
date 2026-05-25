@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     API_PUBLIC_URL: str | None = None
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL: str = "deepseek/deepseek-chat"
+    OPENROUTER_MODEL: str = "sao10k/l3-lunaris-8b"
     OPENAI_API_KEY: str | None = None
     OPENAI_TRANSCRIBE_MODEL: str = "whisper-1"
 
