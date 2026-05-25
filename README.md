@@ -32,32 +32,43 @@ A robust and asynchronous Backend API for the ShishaGuid application, built with
 
 ## 🚀 Local Development (Quick Start)
 
-We use a pure Docker environment. No local Python installation or virtual environments are required.
+Local Docker development uses the same PostgreSQL instance as the workload-1
+deployment. The database is reached through a local `kubectl port-forward`; the
+compose stack no longer starts a disposable PostgreSQL container.
 
 ### 1. Prerequisites
 Make sure you have [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running on your machine.
 
 ### 2. Environment Setup
-Create a `.env` file in the root directory of the project. You must configure your database credentials and Google OAuth2 keys (contact the repository owner for the staging keys if you don't have them):
+Generate a local `.env` file from the Kubernetes secret:
 
-```env
-# Database Settings
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/shishadb
+```bash
+./scripts/remote-db-env.sh
+```
 
-# Security
-SECRET_KEY=your-super-secret-jwt-key
+The generated `.env` is ignored by git and points Docker Compose to
+`host.docker.internal:15432`.
 
-# Google OAuth2 Credentials
-GOOGLE_CLIENT_ID=your_google_client_id_here
-GOOGLE_CLIENT_SECRET=your_google_client_secret_here
-3. Build and Run
-Start the application and the database using Docker Compose:
+### 3. Start the database tunnel
 
-Bash
+Keep this command running in a separate terminal:
+
+```bash
+./scripts/remote-db-port-forward.sh
+```
+
+### 4. Build and Run
+
+Start the application and local MinIO using Docker Compose:
+
+```bash
 docker-compose up --build -d
+```
+
 The API will be available at http://localhost:8000.
 
-4. API Documentation & Testing
+### 5. API Documentation & Testing
+
 FastAPI automatically generates interactive API documentation.
 
 Open your browser and go to http://localhost:8000/docs.
@@ -68,12 +79,16 @@ Leave the client_secret field empty and click Authorize to log in via your Googl
 
 You can now test protected endpoints (e.g., /api/v1/users/me).
 
-5. Stopping the Environment
+### 6. Stopping the Environment
+
 To stop the containers:
 
-Bash
+```bash
 docker-compose down
-Note: If you need to completely wipe the local database and start fresh, use the -v flag: docker-compose down -v.
+```
+
+The database is remote, so `docker-compose down -v` only removes local MinIO
+data, not PostgreSQL data in workload-1.
 
 📁 Project Structure
 Plaintext
