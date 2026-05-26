@@ -164,9 +164,9 @@ async def startup():
             "CREATE INDEX IF NOT EXISTS ix_coals_lower_name ON coals (lower(name))",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_created_at ON bowl_setups (created_at DESC)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_setup_id ON bowl_setup_tobaccos (setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_setup_id ON bowl_setup_tobaccos (bowl_setup_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_tobacco_id ON bowl_setup_tobaccos (tobacco_id)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_views_setup_ip ON bowl_setup_views (setup_id, ip_hash)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_views_setup_ip ON bowl_setup_views (bowl_setup_id, ip_address)",
         ):
             await conn.execute(text(index_sql))
     init_minio()

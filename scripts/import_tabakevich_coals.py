@@ -95,6 +95,22 @@ def parse_count(name: str) -> int | None:
     return None
 
 
+def clean_coal_name(name: str) -> str:
+    cleaned = name
+    cleaned = re.sub(r"\(?\s*\d+[\d\s]*(?:грн|₴|uah)\s*\)?", " ", cleaned, flags=re.I)
+    cleaned = re.sub(
+        r"\(?\s*\d+\s*(?:шт\.?|штук|куб(?:\.|ик(?:а|ов)?)?|pcs|pieces)\s*\)?",
+        " ",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(r"\(\s*\)", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:])", r"\1", cleaned)
+    cleaned = re.sub(r"([,.;:])\s*([,.;:])+", r"\1", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -.,")
+    return cleaned or name
+
+
 def parse_weight(name: str) -> str | None:
     match = re.search(r"(\d+(?:[,.]\d+)?)\s*(кг|kg)\b", name, flags=re.IGNORECASE)
     if match:
@@ -171,7 +187,7 @@ def parse_products(page: str, source_url: str) -> list[dict]:
 
         products.append(
             {
-                "name": name,
+                "name": clean_coal_name(name),
                 "description": " ".join(details),
                 "photo_urls": photo_urls,
                 "price": parse_price(block),
