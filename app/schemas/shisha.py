@@ -57,8 +57,20 @@ class TobaccoResponse(TobaccoBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TobaccoListItem(BaseModel):
+    id: UUID4
+    name: str
+    photo_urls: list[str] = Field(default_factory=list)
+    price: int = Field(..., ge=0)
+    price_currency: str = Field(default="UAH", pattern="^UAH$")
+    package_grams: int | None = Field(default=None, ge=1)
+    strength: int | None = Field(default=None, ge=0, le=10)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TobaccoPageResponse(BaseModel):
-    items: list[TobaccoResponse]
+    items: list[TobaccoListItem]
     total: int
     limit: int
     offset: int
@@ -83,8 +95,19 @@ class CoalResponse(CoalBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CoalListItem(BaseModel):
+    id: UUID4
+    name: str
+    photo_urls: list[str] = Field(default_factory=list)
+    price: int = Field(..., ge=0)
+    price_currency: str = Field(default="UAH", pattern="^UAH$")
+    coals_per_package: int | None = Field(default=None, ge=1)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CoalPageResponse(BaseModel):
-    items: list[CoalResponse]
+    items: list[CoalListItem]
     total: int
     limit: int
     offset: int

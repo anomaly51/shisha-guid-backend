@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.crud import shisha as crud
+from app.crud import base as crud
+from app.crud import catalog
 from app.models.shisha import Tobacco
 from app.models.user import User
 from app.schemas.shisha import TobaccoCreate, TobaccoPageResponse, TobaccoResponse
@@ -25,7 +26,7 @@ async def get_tobaccos(
     db: AsyncSession = Depends(get_db),
 ):
     if limit is not None:
-        return await crud.get_tobaccos_page(
+        return await catalog.get_tobaccos_page(
             db,
             min_price=min_price,
             max_price=max_price,
@@ -34,7 +35,7 @@ async def get_tobaccos(
             limit=limit,
             offset=offset,
         )
-    return await crud.get_filtered_tobaccos(
+    return await catalog.get_filtered_tobaccos(
         db,
         min_price=min_price,
         max_price=max_price,

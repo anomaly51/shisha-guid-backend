@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.crud import shisha as crud
+from app.crud import base as crud
+from app.crud import catalog
 from app.models.shisha import Coal, Kaloud
 from app.models.user import User
 from app.schemas.shisha import (
@@ -27,7 +28,12 @@ async def get_coals(
     db: AsyncSession = Depends(get_db),
 ):
     if limit is not None:
-        return await crud.get_coals_page(db, search=search, limit=limit, offset=offset)
+        return await catalog.get_coals_page(
+            db,
+            search=search,
+            limit=limit,
+            offset=offset,
+        )
     return await crud.get_all(db, Coal)
 
 

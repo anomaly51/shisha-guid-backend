@@ -1,11 +1,11 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from sqlalchemy import text
 
 from app.api.v1 import agent, admin, auth, bowls, coals, profile, setups, tobaccos, upload
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import engine
+from app.core.startup import bootstrap_database
 from app.core.storage import init_minio
 import app.models  # noqa: F401
 
@@ -52,123 +52,7 @@ async def add_public_cache_headers(request: Request, call_next):
 
 @app.on_event("startup")
 async def startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(
-            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "role VARCHAR NOT NULL DEFAULT 'user'"
-            )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "is_banned BOOLEAN NOT NULL DEFAULT false"
-            )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "badges JSON NOT NULL DEFAULT '[]'"
-            )
-        )
-        await conn.execute(
-            text("ALTER TABLE bowl_setups DROP COLUMN IF EXISTS photo_urls")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS "
-                "views_count INTEGER NOT NULL DEFAULT 0"
-            )
-        )
-        await conn.execute(
-            text("UPDATE bowl_setups SET views_count = 0 WHERE views_count IS NULL")
-        )
-        await conn.execute(
-            text("ALTER TABLE bowl_setups ALTER COLUMN views_count SET DEFAULT 0")
-        )
-        await conn.execute(
-            text("ALTER TABLE bowl_setups ALTER COLUMN views_count SET NOT NULL")
-        )
-        for table_name in ("tobaccos", "coals", "kalouds", "bowls"):
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} "
-                    "ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0"
-                )
-            )
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} "
-                    "ADD COLUMN IF NOT EXISTS price_currency VARCHAR NOT NULL DEFAULT 'UAH'"
-                )
-            )
-            await conn.execute(text(f"UPDATE {table_name} SET price = 0 WHERE price IS NULL"))
-            await conn.execute(
-                text(
-                    f"UPDATE {table_name} "
-                    "SET price_currency = 'UAH' WHERE price_currency IS NULL"
-                )
-            )
-            await conn.execute(
-                text(f"ALTER TABLE {table_name} ALTER COLUMN price SET DEFAULT 0")
-            )
-            await conn.execute(
-                text(f"ALTER TABLE {table_name} ALTER COLUMN price SET NOT NULL")
-            )
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} "
-                    "ALTER COLUMN price_currency SET DEFAULT 'UAH'"
-                )
-            )
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} "
-                    "ALTER COLUMN price_currency SET NOT NULL"
-                )
-            )
-        await conn.execute(
-            text("ALTER TABLE coals ADD COLUMN IF NOT EXISTS coals_per_package INTEGER")
-        )
-        await conn.execute(
-            text("ALTER TABLE bowls ADD COLUMN IF NOT EXISTS capacity_grams INTEGER")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE bowls ADD COLUMN IF NOT EXISTS "
-                "bowl_type VARCHAR NOT NULL DEFAULT 'traditional'"
-            )
-        )
-        await conn.execute(
-            text("ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS package_grams INTEGER")
-        )
-        await conn.execute(
-            text("ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS strength INTEGER")
-        )
-        await conn.execute(
-            text("ALTER TABLE coal_placements ADD COLUMN IF NOT EXISTS coal_count INTEGER")
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE bowl_setup_reviews "
-                "ALTER COLUMN rating TYPE DOUBLE PRECISION "
-                "USING rating::DOUBLE PRECISION"
-            )
-        )
-        for index_sql in (
-            "CREATE INDEX IF NOT EXISTS ix_tobaccos_lower_name ON tobaccos (lower(name))",
-            "CREATE INDEX IF NOT EXISTS ix_coals_lower_name ON coals (lower(name))",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_created_at ON bowl_setups (created_at DESC)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_setup_id ON bowl_setup_tobaccos (bowl_setup_id)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_tobacco_id ON bowl_setup_tobaccos (tobacco_id)",
-            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_views_setup_ip ON bowl_setup_views (bowl_setup_id, ip_address)",
-        ):
-            await conn.execute(text(index_sql))
+    await bootstrap_database(engine)
     init_minio()
 
 
