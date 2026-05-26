@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy import text
 
 from app.api.v1 import agent, admin, auth, bowls, coals, profile, setups, tobaccos, upload
@@ -19,6 +20,8 @@ app = FastAPI(
     },
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
@@ -31,6 +34,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_public_cache_headers(request: Request, call_next):
+    response: Response = await call_next(request)
+    if request.method != "GET" or response.status_code >= 400:
+        return response
+
+    path = request.url.path
+    if path.startswith("/api/v1/shisha/") or path.startswith("/api/v1/upload/media/"):
+        response.headers.setdefault(
+            "Cache-Control",
+            "public, max-age=60, stale-while-revalidate=300",
+        )
+    return response
 
 @app.on_event("startup")
 async def startup():
@@ -141,6 +159,16 @@ async def startup():
                 "USING rating::DOUBLE PRECISION"
             )
         )
+        for index_sql in (
+            "CREATE INDEX IF NOT EXISTS ix_tobaccos_lower_name ON tobaccos (lower(name))",
+            "CREATE INDEX IF NOT EXISTS ix_coals_lower_name ON coals (lower(name))",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_created_at ON bowl_setups (created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_setup_id ON bowl_setup_tobaccos (setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_tobaccos_tobacco_id ON bowl_setup_tobaccos (tobacco_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_views_setup_ip ON bowl_setup_views (setup_id, ip_hash)",
+        ):
+            await conn.execute(text(index_sql))
     init_minio()
 
 

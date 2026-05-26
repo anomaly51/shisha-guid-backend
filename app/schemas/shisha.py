@@ -83,6 +83,16 @@ class CoalResponse(CoalBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CoalPageResponse(BaseModel):
+    items: list[CoalResponse]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class KaloudCreate(PricedComponentCreate):
     pass
 

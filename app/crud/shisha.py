@@ -13,6 +13,7 @@ from app.models.shisha import (
     BowlSetupReview,
     BowlSetupTobacco,
     BowlSetupView,
+    Coal,
     Tobacco,
 )
 
@@ -151,6 +152,40 @@ async def get_tobaccos_page(
     )
     total = len(tobaccos)
     items = tobaccos[offset:offset + limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
+
+
+async def get_coals_page(
+    db: AsyncSession,
+    search: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+):
+    limit = max(1, min(limit or 24, 100))
+    offset = max(0, offset)
+    query = select(Coal)
+
+    if search:
+        normalized = f"%{search.strip()}%"
+        query = query.where(
+            Coal.name.ilike(normalized) | Coal.description.ilike(normalized)
+        )
+
+    total_result = await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )
+    total = total_result.scalar_one()
+    result = await db.execute(
+        query.order_by(func.lower(Coal.name)).offset(offset).limit(limit)
+    )
+    items = result.scalars().all()
+
     return {
         "items": items,
         "total": total,

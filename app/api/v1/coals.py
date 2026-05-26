@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -8,13 +8,26 @@ from app.core.security import get_current_user
 from app.crud import shisha as crud
 from app.models.shisha import Coal, Kaloud
 from app.models.user import User
-from app.schemas.shisha import CoalCreate, CoalResponse, KaloudCreate, KaloudResponse
+from app.schemas.shisha import (
+    CoalCreate,
+    CoalPageResponse,
+    CoalResponse,
+    KaloudCreate,
+    KaloudResponse,
+)
 
 router = APIRouter()
 
 
-@router.get("/coals", response_model=list[CoalResponse])
-async def get_coals(db: AsyncSession = Depends(get_db)):
+@router.get("/coals", response_model=list[CoalResponse] | CoalPageResponse)
+async def get_coals(
+    search: str | None = Query(default=None, min_length=1),
+    limit: int | None = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    if limit is not None:
+        return await crud.get_coals_page(db, search=search, limit=limit, offset=offset)
     return await crud.get_all(db, Coal)
 
 
