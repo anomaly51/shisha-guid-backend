@@ -32,6 +32,7 @@ google_client_id="$(env_value GOOGLE_CLIENT_ID your_google_client_id_here)"
 google_client_secret="$(env_value GOOGLE_CLIENT_SECRET your_google_client_secret_here)"
 minio_public_url="$(env_value MINIO_PUBLIC_URL http://localhost:9000/shisha-guid)"
 openrouter_model="$(env_value OPENROUTER_MODEL sao10k/l3-lunaris-8b)"
+admin_emails="$(env_value ADMIN_EMAILS "")"
 
 cat > "$ENV_FILE" <<EOF
 DATABASE_URL=postgresql+asyncpg://${DB_USER}:${password}@${DB_HOST}:${LOCAL_PORT}/${DB_NAME}
@@ -40,6 +41,7 @@ GOOGLE_CLIENT_ID=${google_client_id}
 GOOGLE_CLIENT_SECRET=${google_client_secret}
 MINIO_PUBLIC_URL=${minio_public_url}
 OPENROUTER_MODEL=${openrouter_model}
+ADMIN_EMAILS=${admin_emails}
 EOF
 
 chmod 600 "$ENV_FILE"
