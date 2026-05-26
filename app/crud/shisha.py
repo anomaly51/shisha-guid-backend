@@ -110,7 +110,6 @@ async def get_filtered_tobaccos(
     max_price: int | None = None,
     strength: str | None = None,
     search: str | None = None,
-    limit: int | None = None,
 ):
     query = select(Tobacco)
     if min_price is not None:
@@ -122,8 +121,6 @@ async def get_filtered_tobaccos(
         query = query.where(
             Tobacco.name.ilike(normalized) | Tobacco.description.ilike(normalized)
         )
-    if limit is not None:
-        query = query.limit(limit)
 
     result = await db.execute(query.order_by(func.lower(Tobacco.name)))
     tobaccos = result.scalars().all()
@@ -132,6 +129,35 @@ async def get_filtered_tobaccos(
         for tobacco in tobaccos
         if _matches_strength(get_tobacco_strength(tobacco), strength)
     ]
+
+
+async def get_tobaccos_page(
+    db: AsyncSession,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    strength: str | None = None,
+    search: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+):
+    limit = max(1, min(limit or 24, 100))
+    offset = max(0, offset)
+    tobaccos = await get_filtered_tobaccos(
+        db,
+        min_price=min_price,
+        max_price=max_price,
+        strength=strength,
+        search=search,
+    )
+    total = len(tobaccos)
+    items = tobaccos[offset:offset + limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
 
 
 async def get_by_id(db: AsyncSession, model, item_id: uuid.UUID):

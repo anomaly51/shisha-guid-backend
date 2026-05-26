@@ -57,6 +57,16 @@ class TobaccoResponse(TobaccoBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TobaccoPageResponse(BaseModel):
+    items: list[TobaccoResponse]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CoalBase(PricedComponentBase):
     coals_per_package: int | None = Field(default=None, ge=1)
 
@@ -131,6 +141,7 @@ class BowlSetupTobaccoResponse(BaseModel):
     id: UUID4
     tobacco_id: UUID4
     percentage: int
+    tobacco: TobaccoResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
