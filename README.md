@@ -67,6 +67,17 @@ docker-compose up --build -d
 
 The API will be available at http://localhost:8000.
 
+### Agent and upload configuration
+
+`OPENROUTER_MODEL` defaults to `sao10k/l3-lunaris-8b`, an inexpensive
+OpenRouter model that was selected for lightweight RU/UK chat behavior in the
+setup assistant. Override it in `.env` if production needs stronger reasoning,
+better English quality, or stricter JSON adherence.
+
+`MAX_UPLOAD_BYTES` controls the backend media upload limit and defaults to
+`5242880` (5 MB). Keep `VITE_MAX_UPLOAD_BYTES` on the frontend in sync when
+changing this value.
+
 ### 5. API Documentation & Testing
 
 FastAPI automatically generates interactive API documentation.

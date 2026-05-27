@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.security import get_current_user
 from app.core.storage import (
     build_media_url,
@@ -14,8 +15,7 @@ from app.models.user import User
 from app.schemas.upload import UploadFileResponse, UploadPolicyResponse
 
 router = APIRouter()
-ALLOWED_CONTENT_TYPES = ["image/jpeg", "image/png", "image/gif"]
-MAX_UPLOAD_BYTES = 5242880
+ALLOWED_CONTENT_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 @router.post("", response_model=UploadPolicyResponse)
@@ -47,7 +47,7 @@ async def upload_media_file(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
     content = await file.read()
-    if not content or len(content) > MAX_UPLOAD_BYTES:
+    if not content or len(content) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
     extension = content_type.split("/")[1]

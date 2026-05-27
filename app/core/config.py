@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     MINIO_SECURE: bool = False
     MINIO_PUBLIC_URL: str | None = None
     API_PUBLIC_URL: str | None = None
+    MAX_UPLOAD_BYTES: int = 5242880
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    # Default chosen for inexpensive RU/UK chat behavior via OpenRouter; override
+    # in production if stronger reasoning or stricter JSON adherence is needed.
     OPENROUTER_MODEL: str = "sao10k/l3-lunaris-8b"
     AGENT_CATALOG_LIMIT: int = 300
     AGENT_RATE_LIMIT_PER_MINUTE: int = 12

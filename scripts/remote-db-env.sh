@@ -32,6 +32,7 @@ google_client_id="$(env_value GOOGLE_CLIENT_ID your_google_client_id_here)"
 google_client_secret="$(env_value GOOGLE_CLIENT_SECRET your_google_client_secret_here)"
 minio_public_url="$(env_value MINIO_PUBLIC_URL http://localhost:9000/shisha-guid)"
 openrouter_model="$(env_value OPENROUTER_MODEL sao10k/l3-lunaris-8b)"
+max_upload_bytes="$(env_value MAX_UPLOAD_BYTES 5242880)"
 admin_emails="$(env_value ADMIN_EMAILS "")"
 
 cat > "$ENV_FILE" <<EOF
@@ -41,6 +42,7 @@ GOOGLE_CLIENT_ID=${google_client_id}
 GOOGLE_CLIENT_SECRET=${google_client_secret}
 MINIO_PUBLIC_URL=${minio_public_url}
 OPENROUTER_MODEL=${openrouter_model}
+MAX_UPLOAD_BYTES=${max_upload_bytes}
 ADMIN_EMAILS=${admin_emails}
 EOF
 
