@@ -24,8 +24,8 @@ class Tobacco(Base):
     price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
     package_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
     strength: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brand: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id"), nullable=False

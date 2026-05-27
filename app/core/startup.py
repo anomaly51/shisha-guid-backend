@@ -96,6 +96,7 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE bowls ADD COLUMN IF NOT EXISTS capacity_grams INTEGER",
             "ALTER TABLE bowls ADD COLUMN IF NOT EXISTS bowl_type VARCHAR NOT NULL DEFAULT 'traditional'",
             "UPDATE bowls SET bowl_type = 'traditional' WHERE bowl_type NOT IN ('traditional', 'phunnel')",
+            "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS brand VARCHAR",
             "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS package_grams INTEGER",
             "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS strength INTEGER",
             "ALTER TABLE coal_placements ADD COLUMN IF NOT EXISTS coal_count INTEGER",
@@ -197,6 +198,7 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
 
         for statement in (
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_lower_name ON tobaccos (lower(name))",
+            "CREATE INDEX IF NOT EXISTS ix_tobaccos_lower_brand ON tobaccos (lower(brand))",
             "CREATE INDEX IF NOT EXISTS ix_coals_lower_name ON coals (lower(name))",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_created_at ON bowl_setups (created_at DESC)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",

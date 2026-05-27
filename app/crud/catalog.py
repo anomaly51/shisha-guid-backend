@@ -138,7 +138,7 @@ def _matches_search(item, search: str | None) -> bool:
     if not terms:
         return True
     haystack = _normalize_search_text(
-        f"{getattr(item, 'name', '') or ''} {getattr(item, 'description', '') or ''}"
+        f"{getattr(item, 'brand', '') or ''} {getattr(item, 'name', '') or ''} {getattr(item, 'description', '') or ''}"
     )
     return any(term in haystack for term in terms)
 
@@ -149,12 +149,15 @@ async def get_filtered_tobaccos(
     max_price: int | None = None,
     strength: str | None = None,
     search: str | None = None,
+    brand: str | None = None,
 ):
     query = select(Tobacco)
     if min_price is not None:
         query = query.where(Tobacco.price >= min_price)
     if max_price is not None:
         query = query.where(Tobacco.price <= max_price)
+    if brand:
+        query = query.where(func.lower(Tobacco.brand) == brand.strip().lower())
     result = await db.execute(query.order_by(func.lower(Tobacco.name)))
     tobaccos = result.scalars().all()
     return [
@@ -171,6 +174,7 @@ async def get_tobaccos_page(
     max_price: int | None = None,
     strength: str | None = None,
     search: str | None = None,
+    brand: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ):
@@ -182,6 +186,7 @@ async def get_tobaccos_page(
         max_price=max_price,
         strength=strength,
         search=search,
+        brand=brand,
     )
     total = len(tobaccos)
     items = tobaccos[offset : offset + limit]

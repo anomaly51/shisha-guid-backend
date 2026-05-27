@@ -5,7 +5,7 @@ import os
 import re
 import sys
 
-from import_tabakevich_coals import api_request, clean_coal_name
+from coal_catalog_common import api_request, clean_coal_name
 
 
 def parse_count(text: str) -> int | None:

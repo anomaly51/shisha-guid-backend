@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
@@ -24,6 +25,7 @@ from app.schemas.agent import (
 from app.schemas.shisha import BowlSetupCreate, BowlSetupTobaccoCreate
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _rate_limits: dict[str, deque[datetime]] = defaultdict(deque)
 
@@ -337,37 +339,55 @@ async def _ask_openrouter(
         "messages": [message.model_dump() for message in request.messages],
     }
 
-    async with httpx.AsyncClient(timeout=45) as client:
-        response = await client.post(
-            f"{settings.OPENROUTER_BASE_URL.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": settings.API_PUBLIC_URL or "https://shisha-guid.api-api-api.com",
-                "X-Title": "ShishaGuid setup agent",
-            },
-            json={
-                "model": settings.OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": AGENT_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": json.dumps(user_payload, ensure_ascii=False),
-                    },
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.2,
-            },
-        )
+    try:
+        async with httpx.AsyncClient(timeout=45) as client:
+            response = await client.post(
+                f"{settings.OPENROUTER_BASE_URL.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": settings.API_PUBLIC_URL or "https://shisha-guid.api-api-api.com",
+                    "X-Title": "ShishaGuid setup agent",
+                },
+                json={
+                    "model": settings.OPENROUTER_MODEL,
+                    "messages": [
+                        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": json.dumps(user_payload, ensure_ascii=False),
+                        },
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.2,
+                },
+            )
+    except httpx.HTTPError as exc:
+        logger.exception("OpenRouter request transport failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OpenRouter request failed",
+        ) from exc
 
     if response.status_code >= 400:
+        logger.warning(
+            "OpenRouter request failed",
+            extra={"status_code": response.status_code, "body": response.text[:500]},
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="OpenRouter request failed",
         )
 
-    content = response.json()["choices"][0]["message"]["content"]
-    return _parse_json_object(content)
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+        return _parse_json_object(content)
+    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.exception("OpenRouter returned invalid response")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OpenRouter returned invalid response",
+        ) from exc
 
 
 @router.post("/chat", response_model=AgentChatResponse)

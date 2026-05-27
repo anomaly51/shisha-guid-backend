@@ -41,6 +41,7 @@ class PricedComponentResponse(PricedComponentBase):
 
 
 class TobaccoBase(PricedComponentBase):
+    brand: str | None = Field(default=None, max_length=80)
     package_grams: int | None = Field(default=None, ge=1)
     strength: int | None = Field(default=None, ge=0, le=10)
 
@@ -60,6 +61,7 @@ class TobaccoResponse(TobaccoBase):
 class TobaccoListItem(BaseModel):
     id: UUID4
     name: str
+    brand: str | None = None
     photo_urls: list[str] = Field(default_factory=list)
     price: int = Field(..., ge=0)
     price_currency: str = Field(default="UAH", pattern="^UAH$")

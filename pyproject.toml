@@ -16,6 +16,7 @@ httpx = "^0.26.0"
 pydantic-settings = "^2.1.0"
 python-multipart = "^0.0.9"
 minio = "^7.2.4"
+alembic = "^1.13.1"
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.2.0"

@@ -21,6 +21,7 @@ async def get_tobaccos(
     max_price: int | None = Query(default=None, ge=0),
     strength: Literal["all", "light", "medium", "strong", "heavy"] = "all",
     search: str | None = Query(default=None, min_length=1),
+    brand: str | None = Query(default=None, min_length=1),
     limit: int | None = Query(default=None, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -32,6 +33,7 @@ async def get_tobaccos(
             max_price=max_price,
             strength=strength,
             search=search,
+            brand=brand,
             limit=limit,
             offset=offset,
         )
@@ -41,6 +43,7 @@ async def get_tobaccos(
         max_price=max_price,
         strength=strength,
         search=search,
+        brand=brand,
     )
 
 
