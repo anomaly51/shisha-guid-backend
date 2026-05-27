@@ -11,7 +11,7 @@ from app.core.security import (
     get_user_from_refresh_token,
 )
 from app.models.user import User
-from app.schemas.auth import TokenRefreshRequest
+from app.schemas.auth import TokenRefreshRequest, TokenResponse
 
 router = APIRouter()
 
@@ -32,7 +32,7 @@ async def _nickname_exists(db: AsyncSession, nickname: str) -> bool:
     return result.scalars().first() is not None
 
 
-@router.post("/google/token")
+@router.post("/google/token", response_model=TokenResponse)
 async def exchange_google_token(
     grant_type: str = Form(...),
     code: str = Form(...),
@@ -109,10 +109,11 @@ async def exchange_google_token(
         "access_token": create_access_token(data={"sub": str(user.id)}),
         "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
         "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
     payload: TokenRefreshRequest,
     db: AsyncSession = Depends(get_db),
@@ -122,6 +123,7 @@ async def refresh_token(
         "access_token": create_access_token(data={"sub": str(user.id)}),
         "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
         "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
 
