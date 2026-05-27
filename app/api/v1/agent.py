@@ -106,6 +106,12 @@ JSON schema:
 }
 """.strip()
 
+AGENT_LANGUAGE_INSTRUCTIONS = {
+    "ru": "Отвечай пользователю на русском.",
+    "uk": "Відповідай користувачу українською.",
+    "en": "Reply to the user in English.",
+}
+
 
 async def _catalog_items(db: AsyncSession, model) -> list[dict[str, Any]]:
     query = select(model)
@@ -352,7 +358,7 @@ async def _ask_openrouter(
                 json={
                     "model": settings.OPENROUTER_MODEL,
                     "messages": [
-                        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+                        {"role": "system", "content": f"{AGENT_SYSTEM_PROMPT}\n\n{AGENT_LANGUAGE_INSTRUCTIONS.get(request.language, AGENT_LANGUAGE_INSTRUCTIONS['ru'])}"},
                         {
                             "role": "user",
                             "content": json.dumps(user_payload, ensure_ascii=False),
@@ -415,7 +421,10 @@ async def chat_with_setup_agent(
         missing = _missing_fields(draft)
         if missing:
             return AgentChatResponse(
-                reply=f"Пока нельзя опубликовать: не хватает {', '.join(missing)}.",
+                reply={
+                    "uk": f"Поки не можна опублікувати: бракує {', '.join(missing)}.",
+                    "en": f"Cannot publish yet: missing {', '.join(missing)}.",
+                }.get(request.language, f"Пока нельзя опубликовать: не хватает {', '.join(missing)}."),
                 draft=draft,
                 needs_confirmation=True,
             )
@@ -442,7 +451,10 @@ async def chat_with_setup_agent(
             user.id,
         )
         return AgentChatResponse(
-            reply=f"Готово, опубликовал забивку «{setup.name}».",
+            reply={
+                "uk": f"Готово, опублікував забивку «{setup.name}».",
+                "en": f"Done, published setup \"{setup.name}\".",
+            }.get(request.language, f"Готово, опубликовал забивку «{setup.name}»."),
             draft=draft,
             created_setup_id=str(setup.id),
         )
