@@ -149,6 +149,20 @@ async def update_user(
             detail="Admin cannot demote or ban their own account",
         )
 
+    if "nickname" in payload.model_fields_set and payload.nickname:
+        payload.nickname = " ".join(payload.nickname.split())
+        result = await db.execute(
+            select(User.id).where(
+                func.lower(User.nickname) == payload.nickname.lower(),
+                User.id != user.id,
+            )
+        )
+        if result.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Nickname is already taken",
+            )
+
     for field in ("nickname", "avatar_url", "is_banned"):
         if field in payload.model_fields_set:
             setattr(user, field, getattr(payload, field))

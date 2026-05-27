@@ -5,7 +5,11 @@ from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_admin_user, get_current_user
+from app.core.security import (
+    get_current_admin_user,
+    get_current_user,
+    get_optional_current_user,
+)
 from app.crud import shisha as crud
 from app.models.shisha import BowlSetup, BowlSetupType, CoalPlacement
 from app.models.user import User
@@ -25,8 +29,12 @@ router = APIRouter()
 
 
 @router.get("/coal-placements", response_model=list[CoalPlacementResponse])
-async def get_coal_placements(db: AsyncSession = Depends(get_db)):
-    return await crud.get_all(db, CoalPlacement)
+async def get_coal_placements(
+    limit: int = Query(default=500, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_all(db, CoalPlacement, limit=limit, offset=offset)
 
 
 @router.post(
@@ -67,8 +75,12 @@ async def delete_coal_placement(
 
 
 @router.get("/bowl-setup-types", response_model=list[BowlSetupTypeResponse])
-async def get_bowl_setup_types(db: AsyncSession = Depends(get_db)):
-    return await crud.get_all(db, BowlSetupType)
+async def get_bowl_setup_types(
+    limit: int = Query(default=500, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_all(db, BowlSetupType, limit=limit, offset=offset)
 
 
 @router.post(
@@ -165,9 +177,15 @@ async def record_bowl_setup_view(
     item_id: uuid.UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
 ):
     setup = await crud.get_setup_by_id(db, item_id)
-    return await crud.record_setup_view(db, setup, _get_client_ip(request))
+    return await crud.record_setup_view(
+        db,
+        setup,
+        _get_client_ip(request),
+        user.id if user else None,
+    )
 
 
 @router.patch("/bowl-setups/{item_id}", response_model=BowlSetupResponse)

@@ -8,8 +8,10 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ADMIN_EMAILS: str = ""
     SQL_ECHO: bool = False
+    RUN_SCHEMA_BOOTSTRAP: bool = True
 
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -21,6 +23,8 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str | None = None
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = "sao10k/l3-lunaris-8b"
+    AGENT_CATALOG_LIMIT: int = 300
+    AGENT_RATE_LIMIT_PER_MINUTE: int = 12
     OPENAI_API_KEY: str | None = None
     OPENAI_TRANSCRIBE_MODEL: str = "whisper-1"
 

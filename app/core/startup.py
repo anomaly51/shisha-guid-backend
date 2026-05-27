@@ -1,6 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.config import settings
 from app.core.database import Base
 
 
@@ -8,6 +9,9 @@ PRICED_COMPONENT_TABLES = ("tobaccos", "coals", "kalouds", "bowls")
 
 
 async def bootstrap_database(engine: AsyncEngine) -> None:
+    if not settings.RUN_SCHEMA_BOOTSTRAP:
+        return
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -100,8 +100,13 @@ def _setup_rating(setup: BowlSetup) -> float:
     return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
-async def get_all(db: AsyncSession, model):
-    result = await db.execute(select(model))
+async def get_all(db: AsyncSession, model, limit: int = 500, offset: int = 0):
+    result = await db.execute(
+        select(model)
+        .order_by(model.created_at.desc())
+        .offset(max(0, offset))
+        .limit(max(1, min(limit, 500)))
+    )
     return result.scalars().all()
 
 
@@ -383,7 +388,10 @@ async def record_setup_view(
     db: AsyncSession,
     setup: BowlSetup,
     ip_address: str | None,
+    user_id: uuid.UUID | None = None,
 ) -> BowlSetup:
+    if user_id and setup.creator_id == user_id:
+        return setup
     if not ip_address:
         return setup
 
@@ -485,7 +493,12 @@ async def get_setup_reviews(db: AsyncSession, setup_id: uuid.UUID):
 
 
 async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, user):
-    await get_setup_by_id(db, setup_id)
+    setup = await get_setup_by_id(db, setup_id)
+    if setup.creator_id == user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot review your own setup",
+        )
     existing = await db.execute(
         select(BowlSetupReview).where(
             BowlSetupReview.bowl_setup_id == setup_id,

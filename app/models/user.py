@@ -14,3 +14,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String, nullable=False, default="user")
     is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     badges: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+
+    @property
+    def display_name(self) -> str:
+        if self.nickname:
+            return self.nickname
+        return f"User {str(self.id)[:8]}"

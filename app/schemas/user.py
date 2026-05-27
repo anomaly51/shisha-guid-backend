@@ -1,4 +1,4 @@
-from pydantic import UUID4, BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
 ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
 BADGE_EFFECT_PATTERN = r"^(none|frost|fire|chemical|electric|cosmic|shimmer)$"
@@ -46,6 +46,18 @@ class UserProfileResponse(BaseModel):
 class UserProfileUpdate(BaseModel):
     nickname: str | None = None
     avatar_url: str | None = None
+
+    @field_validator("nickname")
+    @classmethod
+    def normalize_nickname(cls, value: str | None):
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        if not normalized:
+            return None
+        if len(normalized) > 40:
+            raise ValueError("Nickname must be 40 characters or fewer")
+        return normalized
 
 
 class AdminUserResponse(UserProfileResponse):

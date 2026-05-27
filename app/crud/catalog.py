@@ -4,6 +4,53 @@ from sqlalchemy.future import select
 
 from app.models.shisha import Coal, Tobacco
 
+TRANSLIT = str.maketrans(
+    {
+        "а": "a",
+        "б": "b",
+        "в": "v",
+        "г": "g",
+        "д": "d",
+        "е": "e",
+        "ё": "e",
+        "ж": "zh",
+        "з": "z",
+        "и": "i",
+        "й": "i",
+        "к": "k",
+        "л": "l",
+        "м": "m",
+        "н": "n",
+        "о": "o",
+        "п": "p",
+        "р": "r",
+        "с": "s",
+        "т": "t",
+        "у": "u",
+        "ф": "f",
+        "х": "h",
+        "ц": "ts",
+        "ч": "ch",
+        "ш": "sh",
+        "щ": "sch",
+        "ы": "y",
+        "э": "e",
+        "ю": "yu",
+        "я": "ya",
+    }
+)
+
+SEARCH_SYNONYMS = {
+    "blueberry": ("голубика", "черника", "блюберри"),
+    "grape": ("виноград",),
+    "lemon": ("лимон",),
+    "lime": ("лайм",),
+    "mango": ("манго",),
+    "mint": ("мята", "mint"),
+    "peach": ("персик",),
+    "strawberry": ("клубника",),
+    "vanilla": ("ваниль",),
+}
 
 STRENGTH_RANGES = {
     "light": (0, 4.49),
@@ -68,6 +115,34 @@ def matches_strength(value: float, strength: str | None) -> bool:
     return strength_range[0] <= value <= strength_range[1]
 
 
+def _normalize_search_text(value: str | None) -> str:
+    normalized = (value or "").casefold().replace("ё", "е")
+    normalized = normalized.translate(TRANSLIT)
+    return " ".join(normalized.split())
+
+
+def _search_terms(search: str | None) -> list[str]:
+    normalized = _normalize_search_text(search)
+    if not normalized:
+        return []
+    terms = {normalized, *normalized.split()}
+    for key, values in SEARCH_SYNONYMS.items():
+        synonym_values = {_normalize_search_text(value) for value in (key, *values)}
+        if terms & synonym_values:
+            terms.update(synonym_values)
+    return [term for term in terms if term]
+
+
+def _matches_search(item, search: str | None) -> bool:
+    terms = _search_terms(search)
+    if not terms:
+        return True
+    haystack = _normalize_search_text(
+        f"{getattr(item, 'name', '') or ''} {getattr(item, 'description', '') or ''}"
+    )
+    return any(term in haystack for term in terms)
+
+
 async def get_filtered_tobaccos(
     db: AsyncSession,
     min_price: int | None = None,
@@ -80,18 +155,13 @@ async def get_filtered_tobaccos(
         query = query.where(Tobacco.price >= min_price)
     if max_price is not None:
         query = query.where(Tobacco.price <= max_price)
-    if search:
-        normalized = f"%{search.strip()}%"
-        query = query.where(
-            Tobacco.name.ilike(normalized) | Tobacco.description.ilike(normalized)
-        )
-
     result = await db.execute(query.order_by(func.lower(Tobacco.name)))
     tobaccos = result.scalars().all()
     return [
         tobacco
         for tobacco in tobaccos
         if matches_strength(get_tobacco_strength(tobacco), strength)
+        and _matches_search(tobacco, search)
     ]
 
 
@@ -134,18 +204,10 @@ async def get_coals_page(
     offset = max(0, offset)
     query = select(Coal)
 
-    if search:
-        normalized = f"%{search.strip()}%"
-        query = query.where(
-            Coal.name.ilike(normalized) | Coal.description.ilike(normalized)
-        )
-
-    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = total_result.scalar_one()
-    result = await db.execute(
-        query.order_by(func.lower(Coal.name)).offset(offset).limit(limit)
-    )
-    items = result.scalars().all()
+    result = await db.execute(query.order_by(func.lower(Coal.name)))
+    coals = [coal for coal in result.scalars().all() if _matches_search(coal, search)]
+    total = len(coals)
+    items = coals[offset : offset + limit]
 
     return {
         "items": items,

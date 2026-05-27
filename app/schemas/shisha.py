@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.user import UserBadge
 
@@ -181,8 +181,8 @@ class BowlSetupTobaccoResponse(BaseModel):
 
 class PublicCreatorResponse(BaseModel):
     id: UUID4
-    email: str
     nickname: str | None = None
+    display_name: str
     avatar_url: str | None = None
     role: str = "user"
     badges: list[UserBadge] = Field(default_factory=list)
@@ -202,6 +202,13 @@ class BowlSetupBase(BaseModel):
 
 class BowlSetupCreate(BowlSetupBase):
     tobaccos: list[BowlSetupTobaccoCreate] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_tobaccos(self):
+        tobacco_ids = [item.tobacco_id for item in self.tobaccos]
+        if len(tobacco_ids) != len(set(tobacco_ids)):
+            raise ValueError("Setup mix cannot contain duplicate tobaccos")
+        return self
 
 
 class BowlSetupResponse(BowlSetupBase):

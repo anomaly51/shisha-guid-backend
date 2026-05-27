@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -14,8 +14,12 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[BowlResponse])
-async def get_bowls(db: AsyncSession = Depends(get_db)):
-    return await crud.get_all(db, Bowl)
+async def get_bowls(
+    limit: int = Query(default=500, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_all(db, Bowl, limit=limit, offset=offset)
 
 
 @router.post("", response_model=BowlResponse, status_code=status.HTTP_201_CREATED)

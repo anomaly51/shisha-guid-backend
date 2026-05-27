@@ -1,12 +1,17 @@
 import httpx
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    get_user_from_refresh_token,
+)
 from app.models.user import User
+from app.schemas.auth import TokenRefreshRequest
 
 router = APIRouter()
 
@@ -18,6 +23,13 @@ def _is_configured_admin(email: str):
         if configured_email.strip()
     }
     return email.lower() in admin_emails
+
+
+async def _nickname_exists(db: AsyncSession, nickname: str) -> bool:
+    result = await db.execute(
+        select(User.id).where(User.nickname.ilike(nickname.strip())).limit(1)
+    )
+    return result.scalars().first() is not None
 
 
 @router.post("/google/token")
@@ -54,14 +66,23 @@ async def exchange_google_token(
         if "error" in user_info or "id" not in user_info:
             raise HTTPException(status_code=400, detail=user_info)
 
+        if user_info.get("verified_email") is False:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Google email is not verified",
+            )
+
     result = await db.execute(select(User).where(User.google_id == user_info["id"]))
     user = result.scalars().first()
 
     if not user:
+        nickname = (user_info.get("name") or "").strip() or None
+        if nickname and await _nickname_exists(db, nickname):
+            nickname = None
         user = User(
             google_id=user_info["id"],
             email=user_info["email"],
-            nickname=user_info.get("name"),
+            nickname=nickname,
             avatar_url=user_info.get("picture"),
             role="admin" if _is_configured_admin(user_info["email"]) else "user",
         )
@@ -86,6 +107,20 @@ async def exchange_google_token(
 
     return {
         "access_token": create_access_token(data={"sub": str(user.id)}),
+        "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
+        "token_type": "bearer",
+    }
+
+
+@router.post("/refresh")
+async def refresh_token(
+    payload: TokenRefreshRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_user_from_refresh_token(payload.refresh_token, db)
+    return {
+        "access_token": create_access_token(data={"sub": str(user.id)}),
+        "refresh_token": create_refresh_token(data={"sub": str(user.id)}),
         "token_type": "bearer",
     }
 

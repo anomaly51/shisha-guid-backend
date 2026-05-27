@@ -1,9 +1,11 @@
 import json
 import re
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +25,7 @@ from app.schemas.shisha import BowlSetupCreate, BowlSetupTobaccoCreate
 
 router = APIRouter()
 
-CATALOG_LIMIT = 80
+_rate_limits: dict[str, deque[datetime]] = defaultdict(deque)
 
 REQUIRED_FIELDS = {
     "name": "название забивки",
@@ -105,7 +107,9 @@ JSON schema:
 
 async def _catalog_items(db: AsyncSession, model) -> list[dict[str, Any]]:
     result = await db.execute(
-        select(model).order_by(model.created_at, func.lower(model.name)).limit(CATALOG_LIMIT)
+        select(model)
+        .order_by(func.lower(model.name), model.created_at)
+        .limit(settings.AGENT_CATALOG_LIMIT)
     )
     return [
         {
@@ -186,6 +190,7 @@ def _normalize_tobaccos(
 ) -> None:
     by_id = {item["id"]: item for item in catalog["tobaccos"]}
     normalized_tobaccos = []
+    seen_ids = set()
 
     for item in draft.tobaccos:
         selected = by_id.get(item.tobacco_id) if item.tobacco_id else None
@@ -193,6 +198,9 @@ def _normalize_tobaccos(
             selected = _catalog_item_by_name(catalog, "tobaccos", item.tobacco_name)
         if not selected or selected["id"] not in valid_ids:
             continue
+        if selected["id"] in seen_ids:
+            continue
+        seen_ids.add(selected["id"])
         item.tobacco_id = selected["id"]
         item.tobacco_name = selected["name"]
         normalized_tobaccos.append(item)
@@ -248,6 +256,30 @@ def _sanitize_draft(
 
     _normalize_tobaccos(draft, catalog, ids["tobaccos"])
     return draft
+
+
+def _rate_limit_key(request: Request, user: User | None) -> str:
+    if user:
+        return str(user.id)
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.client.host if request.client else "anonymous"
+
+
+def _enforce_agent_rate_limit(request: Request, user: User | None) -> None:
+    limit = max(1, settings.AGENT_RATE_LIMIT_PER_MINUTE)
+    now = datetime.utcnow()
+    cutoff = now - timedelta(minutes=1)
+    bucket = _rate_limits[_rate_limit_key(request, user)]
+    while bucket and bucket[0] <= cutoff:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many agent requests. Please try again later.",
+        )
+    bucket.append(now)
 
 
 def _fill_equipment_defaults(
@@ -338,9 +370,11 @@ async def _ask_openrouter(
 @router.post("/chat", response_model=AgentChatResponse)
 async def chat_with_setup_agent(
     request: AgentChatRequest,
+    http_request: Request,
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_optional_current_user),
 ):
+    _enforce_agent_rate_limit(http_request, user)
     catalog = await _load_catalog(db)
 
     if request.publish:

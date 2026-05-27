@@ -29,15 +29,33 @@ optional_oauth2_scheme = OAuth2AuthorizationCodeBearer(
     auto_error=False,
 )
 
-def create_access_token(data: dict):
+def _create_token(data: dict, expires_delta: timedelta, token_type: str):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    expire = datetime.utcnow() + expires_delta
+    to_encode.update({"exp": expire, "typ": token_type})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def create_access_token(data: dict):
+    return _create_token(
+        data,
+        timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        "access",
+    )
+
+
+def create_refresh_token(data: dict):
+    return _create_token(
+        data,
+        timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        "refresh",
+    )
+
 
 async def _get_user_from_token(
     token: str,
     db: AsyncSession = Depends(get_db),
+    token_type: str = "access",
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,7 +69,7 @@ async def _get_user_from_token(
             algorithms=[settings.ALGORITHM],
         )
         user_id: str = payload.get("sub")
-        if user_id is None:
+        if user_id is None or payload.get("typ", "access") != token_type:
             raise credentials_exception
     except jwt.PyJWTError:
         raise credentials_exception
@@ -66,6 +84,10 @@ async def _get_user_from_token(
             detail="User account is banned",
         )
     return user
+
+
+async def get_user_from_refresh_token(token: str, db: AsyncSession) -> User:
+    return await _get_user_from_token(token, db, token_type="refresh")
 
 
 async def get_current_user(

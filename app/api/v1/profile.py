@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -22,6 +23,18 @@ async def update_profile_me(
     db: AsyncSession = Depends(get_db),
 ):
     if "nickname" in payload.model_fields_set:
+        if payload.nickname:
+            result = await db.execute(
+                select(User.id).where(
+                    func.lower(User.nickname) == payload.nickname.lower(),
+                    User.id != current_user.id,
+                )
+            )
+            if result.scalars().first():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Nickname is already taken",
+                )
         current_user.nickname = payload.nickname
     if "avatar_url" in payload.model_fields_set:
         current_user.avatar_url = (

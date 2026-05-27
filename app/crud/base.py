@@ -7,8 +7,13 @@ from sqlalchemy.future import select
 from app.core.storage import promote_file
 
 
-async def get_all(db: AsyncSession, model):
-    result = await db.execute(select(model))
+async def get_all(db: AsyncSession, model, limit: int = 500, offset: int = 0):
+    result = await db.execute(
+        select(model)
+        .order_by(model.created_at.desc())
+        .offset(max(0, offset))
+        .limit(max(1, min(limit, 500)))
+    )
     return result.scalars().all()
 
 

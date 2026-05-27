@@ -34,7 +34,7 @@ async def get_coals(
             limit=limit,
             offset=offset,
         )
-    return await crud.get_all(db, Coal)
+    return await crud.get_all(db, Coal, limit=500, offset=offset)
 
 
 @router.post("/coals", response_model=CoalResponse, status_code=status.HTTP_201_CREATED)
@@ -71,8 +71,12 @@ async def delete_coal(
 
 
 @router.get("/kalouds", response_model=list[KaloudResponse])
-async def get_kalouds(db: AsyncSession = Depends(get_db)):
-    return await crud.get_all(db, Kaloud)
+async def get_kalouds(
+    limit: int = Query(default=500, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_all(db, Kaloud, limit=limit, offset=offset)
 
 
 @router.post(
