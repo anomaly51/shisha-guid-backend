@@ -1,5 +1,6 @@
 import uuid
-from sqlalchemy import Boolean, JSON, String
+from sqlalchemy import Boolean, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import Base
 
@@ -13,7 +14,7 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[str] = mapped_column(String, nullable=False, default="user")
     is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    badges: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    badges: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
 
     @property
     def display_name(self) -> str:

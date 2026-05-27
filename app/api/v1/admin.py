@@ -1,5 +1,7 @@
 import uuid
 import re
+import html
+import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -63,7 +65,7 @@ def _normalize_role(role: str):
 
 
 def _normalize_badge(label: str | None, color: str | None, effect: str | None):
-    clean_label = (label or "").strip()
+    clean_label = html.escape(" ".join((label or "").split()), quote=False)
     clean_effect = (effect or "none").strip().lower()
     if not clean_label:
         return []
@@ -86,7 +88,8 @@ def _normalize_badge(label: str | None, color: str | None, effect: str | None):
             )
         badge_color = clean_color.upper()
     else:
-        color_seed = sum(ord(char) for char in clean_label.lower())
+        digest = hashlib.sha256(clean_label.casefold().encode("utf-8")).digest()
+        color_seed = int.from_bytes(digest[:4], "big")
         badge_color = BADGE_COLORS[color_seed % len(BADGE_COLORS)]
     return [{
         "label": clean_label,
@@ -184,8 +187,11 @@ async def update_user(
 async def list_content(db: AsyncSession = Depends(get_db)):
     content = {}
     for key, model in CONTENT_MODELS.items():
+        query = select(model)
+        if hasattr(model, "deleted_at"):
+            query = query.where(model.deleted_at.is_(None))
         result = await db.execute(
-            select(model).order_by(model.created_at.desc()).limit(50)
+            query.order_by(model.created_at.desc()).limit(50)
         )
         content[key] = [
             {

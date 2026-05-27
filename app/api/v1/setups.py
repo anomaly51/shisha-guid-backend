@@ -244,3 +244,16 @@ async def update_bowl_setup_review(
     user: User = Depends(get_current_user),
 ):
     return await crud.update_setup_review(db, item_id, review_id, item, user)
+
+
+@router.delete(
+    "/bowl-setups/{item_id}/reviews/{review_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_bowl_setup_review(
+    item_id: uuid.UUID,
+    review_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await crud.delete_setup_review(db, item_id, review_id, user)

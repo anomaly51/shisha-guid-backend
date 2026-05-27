@@ -106,8 +106,11 @@ JSON schema:
 
 
 async def _catalog_items(db: AsyncSession, model) -> list[dict[str, Any]]:
+    query = select(model)
+    if hasattr(model, "deleted_at"):
+        query = query.where(model.deleted_at.is_(None))
     result = await db.execute(
-        select(model)
+        query
         .order_by(func.lower(model.name), model.created_at)
         .limit(settings.AGENT_CATALOG_LIMIT)
     )
@@ -435,6 +438,14 @@ async def chat_with_setup_agent(
         draft=draft,
         needs_confirmation=not missing and action in {"confirm", "create_setup"},
     )
+
+
+@router.get("/capabilities")
+async def get_agent_capabilities():
+    return {
+        "voice_transcription": bool(settings.OPENAI_API_KEY),
+        "message_limit": 20,
+    }
 
 
 @router.post("/transcribe", response_model=AgentTranscribeResponse)

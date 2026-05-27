@@ -208,6 +208,9 @@ class BowlSetupCreate(BowlSetupBase):
         tobacco_ids = [item.tobacco_id for item in self.tobaccos]
         if len(tobacco_ids) != len(set(tobacco_ids)):
             raise ValueError("Setup mix cannot contain duplicate tobaccos")
+        percentage_total = sum(item.percentage for item in self.tobaccos)
+        if percentage_total != 100:
+            raise ValueError("Setup tobacco percentages must sum to 100")
         return self
 
 
@@ -217,7 +220,9 @@ class BowlSetupResponse(BowlSetupBase):
     creator: PublicCreatorResponse | None = None
     created_at: datetime
     views_count: int = 0
+    heaviness_score: float | None = None
     average_rating: float = 0
+    rating_count: int = 0
     tobaccos: list[BowlSetupTobaccoResponse]
 
     model_config = ConfigDict(from_attributes=True)

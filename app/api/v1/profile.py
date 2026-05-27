@@ -38,7 +38,9 @@ async def update_profile_me(
         current_user.nickname = payload.nickname
     if "avatar_url" in payload.model_fields_set:
         current_user.avatar_url = (
-            promote_file(payload.avatar_url, "profile") if payload.avatar_url else None
+            promote_file(payload.avatar_url, "profile", str(current_user.id))
+            if payload.avatar_url
+            else None
         )
     db.add(current_user)
     await db.commit()

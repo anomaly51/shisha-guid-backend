@@ -77,6 +77,12 @@ def generate_presigned_policy(object_name: str, content_type: str):
 
 
 def build_media_url(request: Request, object_name: str) -> str:
+    encoded_name = "/".join(
+        urllib.parse.quote(part, safe="") for part in object_name.split("/")
+    )
+    if settings.MINIO_PUBLIC_URL:
+        return f"{settings.MINIO_PUBLIC_URL.rstrip('/')}/{encoded_name}"
+
     base_url = settings.API_PUBLIC_URL or str(request.base_url).rstrip("/")
     encoded_name = "/".join(
         urllib.parse.quote(part, safe="") for part in object_name.split("/")
@@ -116,14 +122,36 @@ def extract_object_path(media_url: str) -> str:
     return object_path
 
 
-def promote_file(temp_url: str, permanent_folder: str) -> str:
+def promote_file(
+    temp_url: str,
+    permanent_folder: str,
+    expected_user_id: str | None = None,
+) -> str:
     if "/temp/" not in temp_url:
         return temp_url
 
     object_path = extract_object_path(temp_url)
-    file_name = object_path.split("/")[-1]
-    user_id = object_path.split("/")[0]
+    path_parts = object_path.split("/")
+    if len(path_parts) < 3 or path_parts[1] != "temp":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+    user_id = path_parts[0]
+    if expected_user_id and user_id != expected_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Temporary media belongs to another user",
+        )
+
+    file_name = path_parts[-1]
     new_object_path = f"{user_id}/{permanent_folder}/{file_name}"
+
+    try:
+        minio_client.stat_object(settings.MINIO_BUCKET, object_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Temporary media not found",
+        ) from exc
 
     minio_client.copy_object(
         settings.MINIO_BUCKET,

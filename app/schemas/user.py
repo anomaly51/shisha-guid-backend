@@ -14,7 +14,7 @@ class UserBanUpdate(BaseModel):
 
 
 class AdminUserUpdate(BaseModel):
-    nickname: str | None = None
+    nickname: str | None = Field(default=None, max_length=40)
     avatar_url: str | None = None
     role: str | None = Field(default=None, pattern=ROLE_PATTERN)
     is_banned: bool | None = None
@@ -22,6 +22,14 @@ class AdminUserUpdate(BaseModel):
     badge_color: str | None = Field(default=None, pattern=BADGE_COLOR_PATTERN)
     badge_effect: str | None = Field(default="none", pattern=BADGE_EFFECT_PATTERN)
     badges: list[str] | None = Field(default=None, max_length=1)
+
+    @field_validator("nickname")
+    @classmethod
+    def normalize_nickname(cls, value: str | None):
+        if value is None:
+            return None
+        normalized = " ".join(value.split())
+        return normalized or None
 
 
 class UserBadge(BaseModel):

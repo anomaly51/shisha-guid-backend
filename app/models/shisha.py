@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -32,6 +32,7 @@ class Tobacco(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Coal(Base):
@@ -50,6 +51,7 @@ class Coal(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Kaloud(Base):
@@ -67,10 +69,17 @@ class Kaloud(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Bowl(Base):
     __tablename__ = "bowls"
+    __table_args__ = (
+        CheckConstraint(
+            "bowl_type IN ('traditional', 'phunnel')",
+            name="ck_bowls_bowl_type",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -86,6 +95,7 @@ class Bowl(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CoalPlacement(Base):
@@ -102,6 +112,7 @@ class CoalPlacement(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BowlSetupType(Base):
@@ -117,6 +128,7 @@ class BowlSetupType(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BowlSetup(Base):
@@ -144,6 +156,9 @@ class BowlSetup(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     views_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    heaviness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rating_average: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     creator: Mapped["User"] = relationship("User")
     bowl: Mapped["Bowl"] = relationship("Bowl")
@@ -164,6 +179,8 @@ class BowlSetup(Base):
 
     @property
     def average_rating(self) -> float:
+        if self.rating_average is not None:
+            return round(float(self.rating_average), 1)
         ratings = [review.rating for review in self.reviews or []]
         return round(sum(ratings) / len(ratings), 1) if ratings else 0
 

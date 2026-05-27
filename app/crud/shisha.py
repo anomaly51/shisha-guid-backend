@@ -2,7 +2,9 @@ import uuid
 from datetime import timedelta
 
 from fastapi import HTTPException, status
-from sqlalchemy import distinct, func
+from sqlalchemy import distinct, func, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -82,6 +84,9 @@ def _matches_strength(value: float, strength: str | None) -> bool:
 
 
 def get_setup_heaviness(setup: BowlSetup) -> float:
+    if setup.heaviness_score is not None:
+        return _clamp(float(setup.heaviness_score), 0, 10)
+
     mix = setup.tobaccos or []
     if not mix:
         return 5
@@ -96,16 +101,49 @@ def get_setup_heaviness(setup: BowlSetup) -> float:
 
 
 def _setup_rating(setup: BowlSetup) -> float:
+    if setup.rating_average is not None:
+        return round(float(setup.rating_average), 1)
     ratings = [review.rating for review in setup.reviews or []]
     return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
-async def get_all(db: AsyncSession, model, limit: int = 500, offset: int = 0):
+async def _calculate_heaviness_score(db: AsyncSession, tobaccos) -> float:
+    tobacco_ids = [item.tobacco_id for item in tobaccos]
+    if not tobacco_ids:
+        return 5
+
+    result = await db.execute(select(Tobacco).where(Tobacco.id.in_(tobacco_ids)))
+    tobacco_by_id = {tobacco.id: tobacco for tobacco in result.scalars().all()}
+    total = sum(int(item.percentage or 0) for item in tobaccos) or 100
+    value = 0.0
+
+    for item in tobaccos:
+        tobacco = tobacco_by_id.get(item.tobacco_id)
+        if tobacco:
+            value += get_tobacco_strength(tobacco) * (int(item.percentage or 0) / total)
+
+    return round(_clamp(value or 5, 0, 10), 1)
+
+
+async def _refresh_setup_rating(db: AsyncSession, setup_id: uuid.UUID) -> None:
     result = await db.execute(
-        select(model)
-        .order_by(model.created_at.desc())
-        .offset(max(0, offset))
-        .limit(max(1, min(limit, 500)))
+        select(
+            func.coalesce(func.avg(BowlSetupReview.rating), 0),
+            func.count(BowlSetupReview.id),
+        ).where(BowlSetupReview.bowl_setup_id == setup_id)
+    )
+    average, count = result.one()
+    setup = await get_setup_by_id(db, setup_id)
+    setup.rating_average = round(float(average or 0), 1)
+    setup.rating_count = int(count or 0)
+
+
+async def get_all(db: AsyncSession, model, limit: int = 500, offset: int = 0):
+    query = select(model)
+    if hasattr(model, "deleted_at"):
+        query = query.where(model.deleted_at.is_(None))
+    result = await db.execute(
+        query.order_by(model.created_at.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500)))
     )
     return result.scalars().all()
 
@@ -117,7 +155,7 @@ async def get_filtered_tobaccos(
     strength: str | None = None,
     search: str | None = None,
 ):
-    query = select(Tobacco)
+    query = select(Tobacco).where(Tobacco.deleted_at.is_(None))
     if min_price is not None:
         query = query.where(Tobacco.price >= min_price)
     if max_price is not None:
@@ -174,7 +212,7 @@ async def get_coals_page(
 ):
     limit = max(1, min(limit or 24, 100))
     offset = max(0, offset)
-    query = select(Coal)
+    query = select(Coal).where(Coal.deleted_at.is_(None))
 
     if search:
         normalized = f"%{search.strip()}%"
@@ -201,7 +239,10 @@ async def get_coals_page(
 
 
 async def get_by_id(db: AsyncSession, model, item_id: uuid.UUID):
-    result = await db.execute(select(model).where(model.id == item_id))
+    query = select(model).where(model.id == item_id)
+    if hasattr(model, "deleted_at"):
+        query = query.where(model.deleted_at.is_(None))
+    result = await db.execute(query)
     item = result.scalars().first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -212,7 +253,8 @@ async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
     data = schema.model_dump()
     if "photo_urls" in data:
         data["photo_urls"] = [
-            promote_file(url, model.__tablename__) for url in data["photo_urls"]
+            promote_file(url, model.__tablename__, str(user_id))
+            for url in data["photo_urls"]
         ]
     item = model(**data, creator_id=user_id)
     db.add(item)
@@ -248,7 +290,8 @@ async def update_item_for_user(
     data = schema.model_dump(exclude_unset=True)
     if "photo_urls" in data:
         data["photo_urls"] = [
-            promote_file(url, model.__tablename__) for url in data["photo_urls"]
+            promote_file(url, model.__tablename__, str(user.id))
+            for url in data["photo_urls"]
         ]
     for key, value in data.items():
         setattr(item, key, value)
@@ -259,6 +302,10 @@ async def update_item_for_user(
 
 async def delete_item(db: AsyncSession, model, item_id: uuid.UUID):
     item = await get_by_id(db, model, item_id)
+    if hasattr(item, "deleted_at"):
+        item.deleted_at = func.now()
+        await db.commit()
+        return
     await db.delete(item)
     await db.commit()
 
@@ -267,6 +314,10 @@ async def delete_item_for_user(db: AsyncSession, model, item_id: uuid.UUID, user
     item = await get_by_id(db, model, item_id)
     if item.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    if hasattr(item, "deleted_at"):
+        item.deleted_at = func.now()
+        await db.commit()
+        return
     await db.delete(item)
     await db.commit()
 
@@ -296,7 +347,6 @@ async def get_setups_page(
     query = select(BowlSetup).options(
         selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
         selectinload(BowlSetup.creator),
-        selectinload(BowlSetup.reviews),
     )
 
     if selected_tobacco_ids:
@@ -308,7 +358,15 @@ async def get_setups_page(
         )
         query = query.where(BowlSetup.id.in_(matching_setup_ids))
 
-    can_page_in_db = strength in (None, "all") and sort in {"newest", "views", "name"}
+    if strength and strength != "all":
+        strength_range = STRENGTH_RANGES.get(strength)
+        if strength_range:
+            query = query.where(
+                BowlSetup.heaviness_score >= strength_range[0],
+                BowlSetup.heaviness_score <= strength_range[1],
+            )
+
+    can_page_in_db = sort in {"newest", "views", "name", "rating", "strengthDesc", "strengthAsc"}
 
     if can_page_in_db:
         total_result = await db.execute(
@@ -318,6 +376,12 @@ async def get_setups_page(
 
         if sort == "views":
             query = query.order_by(BowlSetup.views_count.desc(), BowlSetup.created_at.desc())
+        elif sort == "rating":
+            query = query.order_by(BowlSetup.rating_average.desc(), BowlSetup.created_at.desc())
+        elif sort == "strengthDesc":
+            query = query.order_by(BowlSetup.heaviness_score.desc().nullslast(), BowlSetup.created_at.desc())
+        elif sort == "strengthAsc":
+            query = query.order_by(BowlSetup.heaviness_score.asc().nullslast(), BowlSetup.created_at.desc())
         elif sort == "name":
             query = query.order_by(func.lower(BowlSetup.name), BowlSetup.created_at.desc())
         else:
@@ -374,7 +438,6 @@ async def get_setup_by_id(db: AsyncSession, item_id: uuid.UUID):
         .options(
             selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
             selectinload(BowlSetup.creator),
-            selectinload(BowlSetup.reviews),
         )
         .where(BowlSetup.id == item_id)
     )
@@ -412,18 +475,50 @@ async def record_setup_view(
     if not should_count:
         return setup
 
-    if view is None:
-        db.add(BowlSetupView(bowl_setup_id=setup.id, ip_address=normalized_ip))
-    else:
-        view.last_viewed_at = now
+    counted = False
 
-    setup.views_count = (setup.views_count or 0) + 1
+    if view is None:
+        statement = (
+            insert(BowlSetupView)
+            .values(bowl_setup_id=setup.id, ip_address=normalized_ip)
+            .on_conflict_do_nothing(
+                index_elements=["bowl_setup_id", "ip_address"],
+            )
+            .returning(BowlSetupView.id)
+        )
+        try:
+            insert_result = await db.execute(statement)
+            counted = insert_result.scalar_one_or_none() is not None
+        except IntegrityError:
+            await db.rollback()
+            counted = False
+    else:
+        update_result = await db.execute(
+            update(BowlSetupView)
+            .where(
+                BowlSetupView.id == view.id,
+                BowlSetupView.last_viewed_at <= cutoff,
+            )
+            .values(last_viewed_at=now)
+            .returning(BowlSetupView.id)
+        )
+        counted = update_result.scalar_one_or_none() is not None
+
+    if not counted:
+        return setup
+
+    await db.execute(
+        update(BowlSetup)
+        .where(BowlSetup.id == setup.id)
+        .values(views_count=BowlSetup.views_count + 1)
+    )
     await db.commit()
     return await get_setup_by_id(db, setup.id)
 
 
 async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
     data = schema.model_dump(exclude={"tobaccos"})
+    data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     setup = BowlSetup(**data, creator_id=user_id)
     db.add(setup)
     await db.flush()
@@ -442,6 +537,7 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
 async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
     setup = await get_setup_by_id(db, item_id)
     data = schema.model_dump(exclude={"tobaccos"})
+    data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     for key, value in data.items():
         setattr(setup, key, value)
     for tob in setup.tobaccos:
@@ -464,6 +560,7 @@ async def update_setup_for_user(db: AsyncSession, item_id: uuid.UUID, schema, us
     if setup.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     data = schema.model_dump(exclude={"tobaccos"})
+    data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     for key, value in data.items():
         setattr(setup, key, value)
     for tob in setup.tobaccos:
@@ -517,6 +614,8 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
         **schema.model_dump(),
     )
     db.add(review)
+    await db.flush()
+    await _refresh_setup_rating(db, setup_id)
     await db.commit()
     result = await db.execute(
         select(BowlSetupReview)
@@ -552,6 +651,8 @@ async def update_setup_review(
     for key, value in data.items():
         setattr(review, key, value)
 
+    await db.flush()
+    await _refresh_setup_rating(db, setup_id)
     await db.commit()
     await db.refresh(review)
     result = await db.execute(
@@ -560,3 +661,28 @@ async def update_setup_review(
         .where(BowlSetupReview.id == review.id)
     )
     return result.scalars().one()
+
+
+async def delete_setup_review(
+    db: AsyncSession,
+    setup_id: uuid.UUID,
+    review_id: uuid.UUID,
+    user,
+):
+    await get_setup_by_id(db, setup_id)
+    result = await db.execute(
+        select(BowlSetupReview).where(
+            BowlSetupReview.id == review_id,
+            BowlSetupReview.bowl_setup_id == setup_id,
+        )
+    )
+    review = result.scalars().first()
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if review.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+    await db.delete(review)
+    await db.flush()
+    await _refresh_setup_rating(db, setup_id)
+    await db.commit()
