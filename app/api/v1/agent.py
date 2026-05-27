@@ -40,7 +40,7 @@ REQUIRED_FIELDS = {
 
 AGENT_SYSTEM_PROMPT = """
 Ты чат-агент ShishaGuid для добавления забивки.
-Отвечай пользователю на русском кратко и по делу.
+Отвечай пользователю кратко и по делу.
 Твоя задача: собрать черновик забивки из текста пользователя, сверить его с каталогом,
 обновить уже выбранные поля формы и попросить проверить черновик. Самостоятельно
 не публикуй забивку.
@@ -344,6 +344,15 @@ async def _ask_openrouter(
         "current_draft": request.draft.model_dump() if request.draft else None,
         "messages": [message.model_dump() for message in request.messages],
     }
+    system_prompt = "\n\n".join(
+        [
+            AGENT_SYSTEM_PROMPT,
+            AGENT_LANGUAGE_INSTRUCTIONS.get(
+                request.language,
+                AGENT_LANGUAGE_INSTRUCTIONS["ru"],
+            ),
+        ]
+    )
 
     try:
         async with httpx.AsyncClient(timeout=45) as client:
@@ -358,7 +367,7 @@ async def _ask_openrouter(
                 json={
                     "model": settings.OPENROUTER_MODEL,
                     "messages": [
-                        {"role": "system", "content": f"{AGENT_SYSTEM_PROMPT}\n\n{AGENT_LANGUAGE_INSTRUCTIONS.get(request.language, AGENT_LANGUAGE_INSTRUCTIONS['ru'])}"},
+                        {"role": "system", "content": system_prompt},
                         {
                             "role": "user",
                             "content": json.dumps(user_payload, ensure_ascii=False),
