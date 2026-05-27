@@ -10,14 +10,17 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.storage import promote_file
+from app.core.email import send_email
 from app.models.shisha import (
     BowlSetup,
     BowlSetupReview,
     BowlSetupTobacco,
+    BowlSetupVersion,
     BowlSetupView,
     Coal,
     Tobacco,
 )
+from app.models.user import Notification, SetupBookmark, User, UserFollow
 
 
 VIEW_INTERVAL = timedelta(minutes=30)
@@ -105,6 +108,56 @@ def _setup_rating(setup: BowlSetup) -> float:
         return round(float(setup.rating_average), 1)
     ratings = [review.rating for review in setup.reviews or []]
     return round(sum(ratings) / len(ratings), 1) if ratings else 0
+
+
+def _snapshot_setup(setup: BowlSetup) -> dict:
+    return {
+        "name": setup.name,
+        "description": setup.description,
+        "photo_urls": setup.photo_urls or [],
+        "bowl_id": str(setup.bowl_id),
+        "kaloud_id": str(setup.kaloud_id),
+        "coal_id": str(setup.coal_id),
+        "coal_placement_id": str(setup.coal_placement_id),
+        "bowl_setup_type_id": str(setup.bowl_setup_type_id),
+        "tobaccos": [
+            {"tobacco_id": str(item.tobacco_id), "percentage": item.percentage}
+            for item in setup.tobaccos or []
+        ],
+    }
+
+
+async def _decorate_setups(
+    db: AsyncSession,
+    setups: list[BowlSetup],
+    user_id: uuid.UUID | None = None,
+) -> list[BowlSetup]:
+    if not setups:
+        return setups
+
+    creator_ids = {setup.creator_id for setup in setups}
+    counts_result = await db.execute(
+        select(BowlSetup.creator_id, func.count(BowlSetup.id))
+        .where(BowlSetup.creator_id.in_(creator_ids))
+        .group_by(BowlSetup.creator_id)
+    )
+    setup_counts = {creator_id: int(count) for creator_id, count in counts_result.all()}
+
+    bookmarked_ids: set[uuid.UUID] = set()
+    if user_id:
+        bookmark_result = await db.execute(
+            select(SetupBookmark.bowl_setup_id).where(
+                SetupBookmark.user_id == user_id,
+                SetupBookmark.bowl_setup_id.in_([setup.id for setup in setups]),
+            )
+        )
+        bookmarked_ids = set(bookmark_result.scalars().all())
+
+    for setup in setups:
+        if setup.creator:
+            setattr(setup.creator, "setups_count", setup_counts.get(setup.creator_id, 0))
+        setattr(setup, "is_bookmarked", setup.id in bookmarked_ids)
+    return setups
 
 
 async def _calculate_heaviness_score(db: AsyncSession, tobaccos) -> float:
@@ -327,8 +380,23 @@ async def get_all_setups(
     tobacco_ids: list[uuid.UUID] | None = None,
     strength: str | None = None,
     sort: str = "newest",
+    search: str | None = None,
+    creator_id: uuid.UUID | None = None,
+    bookmarked_by: uuid.UUID | None = None,
+    followed_by: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
 ):
-    page = await get_setups_page(db, tobacco_ids, strength, sort)
+    page = await get_setups_page(
+        db,
+        tobacco_ids,
+        strength,
+        sort,
+        search=search,
+        creator_id=creator_id,
+        bookmarked_by=bookmarked_by,
+        followed_by=followed_by,
+        user_id=user_id,
+    )
     return page["items"]
 
 
@@ -339,6 +407,11 @@ async def get_setups_page(
     sort: str = "newest",
     limit: int | None = None,
     offset: int = 0,
+    search: str | None = None,
+    creator_id: uuid.UUID | None = None,
+    bookmarked_by: uuid.UUID | None = None,
+    followed_by: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
 ):
     limit = max(1, min(limit or 50, 50))
     offset = max(0, offset)
@@ -357,6 +430,23 @@ async def get_setups_page(
             .having(func.count(distinct(BowlSetupTobacco.tobacco_id)) == len(selected_tobacco_ids))
         )
         query = query.where(BowlSetup.id.in_(matching_setup_ids))
+    if search:
+        normalized = f"%{search.strip()}%"
+        query = query.where(
+            BowlSetup.name.ilike(normalized) | BowlSetup.description.ilike(normalized)
+        )
+    if creator_id:
+        query = query.where(BowlSetup.creator_id == creator_id)
+    if bookmarked_by:
+        bookmarked_setup_ids = select(SetupBookmark.bowl_setup_id).where(
+            SetupBookmark.user_id == bookmarked_by
+        )
+        query = query.where(BowlSetup.id.in_(bookmarked_setup_ids))
+    if followed_by:
+        followed_creator_ids = select(UserFollow.followed_id).where(
+            UserFollow.follower_id == followed_by
+        )
+        query = query.where(BowlSetup.creator_id.in_(followed_creator_ids))
 
     if strength and strength != "all":
         strength_range = STRENGTH_RANGES.get(strength)
@@ -389,6 +479,7 @@ async def get_setups_page(
 
         result = await db.execute(query.offset(offset).limit(limit))
         items = result.scalars().all()
+        await _decorate_setups(db, items, user_id)
         return {
             "items": items,
             "total": total,
@@ -423,6 +514,7 @@ async def get_setups_page(
 
     total = len(setups)
     items = setups[offset:offset + limit]
+    await _decorate_setups(db, items, user_id)
     return {
         "items": items,
         "total": total,
@@ -432,7 +524,11 @@ async def get_setups_page(
     }
 
 
-async def get_setup_by_id(db: AsyncSession, item_id: uuid.UUID):
+async def get_setup_by_id(
+    db: AsyncSession,
+    item_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+):
     result = await db.execute(
         select(BowlSetup)
         .options(
@@ -444,6 +540,7 @@ async def get_setup_by_id(db: AsyncSession, item_id: uuid.UUID):
     item = result.scalars().first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await _decorate_setups(db, [item], user_id)
     return item
 
 
@@ -518,6 +615,9 @@ async def record_setup_view(
 
 async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
     data = schema.model_dump(exclude={"tobaccos"})
+    data["photo_urls"] = [
+        promote_file(url, "bowl_setups", str(user_id)) for url in data.get("photo_urls", [])
+    ]
     data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     setup = BowlSetup(**data, creator_id=user_id)
     db.add(setup)
@@ -536,10 +636,19 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
 
 async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
     setup = await get_setup_by_id(db, item_id)
+    db.add(BowlSetupVersion(
+        bowl_setup_id=setup.id,
+        version=setup.version,
+        snapshot=_snapshot_setup(setup),
+    ))
     data = schema.model_dump(exclude={"tobaccos"})
+    data["photo_urls"] = [
+        promote_file(url, "bowl_setups", str(setup.creator_id)) for url in data.get("photo_urls", [])
+    ]
     data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     for key, value in data.items():
         setattr(setup, key, value)
+    setup.version = (setup.version or 1) + 1
     for tob in setup.tobaccos:
         await db.delete(tob)
     await db.flush()
@@ -559,10 +668,19 @@ async def update_setup_for_user(db: AsyncSession, item_id: uuid.UUID, schema, us
     setup = await get_setup_by_id(db, item_id)
     if setup.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    db.add(BowlSetupVersion(
+        bowl_setup_id=setup.id,
+        version=setup.version,
+        snapshot=_snapshot_setup(setup),
+    ))
     data = schema.model_dump(exclude={"tobaccos"})
+    data["photo_urls"] = [
+        promote_file(url, "bowl_setups", str(setup.creator_id)) for url in data.get("photo_urls", [])
+    ]
     data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     for key, value in data.items():
         setattr(setup, key, value)
+    setup.version = (setup.version or 1) + 1
     for tob in setup.tobaccos:
         await db.delete(tob)
     await db.flush()
@@ -614,6 +732,23 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
         **schema.model_dump(),
     )
     db.add(review)
+    if setup.creator_id != user.id:
+        notification = Notification(
+            user_id=setup.creator_id,
+            actor_id=user.id,
+            bowl_setup_id=setup.id,
+            type="setup_review",
+            title="New setup review",
+            body=f"{user.display_name} reviewed your setup {setup.name}.",
+        )
+        db.add(notification)
+        owner = await db.get(User, setup.creator_id)
+        if owner:
+            send_email(
+                owner.email,
+                "New review on your ShishaGuid setup",
+                f"{user.display_name} reviewed your setup \"{setup.name}\".",
+            )
     await db.flush()
     await _refresh_setup_rating(db, setup_id)
     await db.commit()
@@ -623,6 +758,62 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
         .where(BowlSetupReview.id == review.id)
     )
     return result.scalars().one()
+
+
+async def get_setup_versions(db: AsyncSession, setup_id: uuid.UUID, user):
+    setup = await get_setup_by_id(db, setup_id)
+    if setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    result = await db.execute(
+        select(BowlSetupVersion)
+        .where(BowlSetupVersion.bowl_setup_id == setup_id)
+        .order_by(BowlSetupVersion.version.desc())
+    )
+    return result.scalars().all()
+
+
+async def clone_setup(db: AsyncSession, setup_id: uuid.UUID, user):
+    setup = await get_setup_by_id(db, setup_id)
+    clone = BowlSetup(
+        name=f"{setup.name} copy",
+        description=setup.description,
+        photo_urls=list(setup.photo_urls or []),
+        creator_id=user.id,
+        bowl_id=setup.bowl_id,
+        kaloud_id=setup.kaloud_id,
+        coal_id=setup.coal_id,
+        coal_placement_id=setup.coal_placement_id,
+        bowl_setup_type_id=setup.bowl_setup_type_id,
+        heaviness_score=setup.heaviness_score,
+        source_setup_id=setup.id,
+    )
+    db.add(clone)
+    await db.flush()
+    for item in setup.tobaccos:
+        db.add(BowlSetupTobacco(
+            bowl_setup_id=clone.id,
+            tobacco_id=item.tobacco_id,
+            percentage=item.percentage,
+        ))
+    await db.commit()
+    return await get_setup_by_id(db, clone.id, user.id)
+
+
+async def set_setup_bookmark(db: AsyncSession, setup_id: uuid.UUID, user, enabled: bool):
+    await get_setup_by_id(db, setup_id)
+    result = await db.execute(
+        select(SetupBookmark).where(
+            SetupBookmark.user_id == user.id,
+            SetupBookmark.bowl_setup_id == setup_id,
+        )
+    )
+    bookmark = result.scalars().first()
+    if enabled and not bookmark:
+        db.add(SetupBookmark(user_id=user.id, bowl_setup_id=setup_id))
+    if not enabled and bookmark:
+        await db.delete(bookmark)
+    await db.commit()
+    return await get_setup_by_id(db, setup_id, user.id)
 
 
 async def update_setup_review(

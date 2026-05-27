@@ -186,6 +186,7 @@ class PublicCreatorResponse(BaseModel):
     avatar_url: str | None = None
     role: str = "user"
     badges: list[UserBadge] = Field(default_factory=list)
+    setups_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -193,6 +194,7 @@ class PublicCreatorResponse(BaseModel):
 class BowlSetupBase(BaseModel):
     name: str
     description: str | None = None
+    photo_urls: list[str] = Field(default_factory=list)
     bowl_id: UUID4
     kaloud_id: UUID4
     coal_id: UUID4
@@ -223,6 +225,9 @@ class BowlSetupResponse(BowlSetupBase):
     heaviness_score: float | None = None
     average_rating: float = 0
     rating_count: int = 0
+    version: int = 1
+    source_setup_id: UUID4 | None = None
+    is_bookmarked: bool = False
     tobaccos: list[BowlSetupTobaccoResponse]
 
     model_config = ConfigDict(from_attributes=True)
@@ -250,6 +255,16 @@ class BowlSetupReviewResponse(BaseModel):
     creator: PublicCreatorResponse | None = None
     rating: float
     description: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BowlSetupVersionResponse(BaseModel):
+    id: UUID4
+    bowl_setup_id: UUID4
+    version: int
+    snapshot: dict
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

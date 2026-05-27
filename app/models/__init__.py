@@ -4,13 +4,14 @@ from .shisha import (
     BowlSetupReview,
     BowlSetupTobacco,
     BowlSetupType,
+    BowlSetupVersion,
     BowlSetupView,
     Coal,
     CoalPlacement,
     Kaloud,
     Tobacco,
 )
-from .user import User
+from .user import Notification, SetupBookmark, User, UserFollow
 
 __all__ = [
     "Bowl",
@@ -18,10 +19,14 @@ __all__ = [
     "BowlSetupReview",
     "BowlSetupTobacco",
     "BowlSetupType",
+    "BowlSetupVersion",
     "BowlSetupView",
     "Coal",
     "CoalPlacement",
     "Kaloud",
     "Tobacco",
+    "Notification",
+    "SetupBookmark",
     "User",
+    "UserFollow",
 ]

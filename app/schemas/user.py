@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
 ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
@@ -70,3 +72,36 @@ class UserProfileUpdate(BaseModel):
 
 class AdminUserResponse(UserProfileResponse):
     pass
+
+
+class PublicUserResponse(BaseModel):
+    id: UUID4
+    nickname: str | None = None
+    display_name: str
+    avatar_url: str | None = None
+    role: str = "user"
+    badges: list[UserBadge] = Field(default_factory=list)
+    setups_count: int = 0
+    followers_count: int = 0
+    following_count: int = 0
+    is_following: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationResponse(BaseModel):
+    id: UUID4
+    type: str
+    title: str
+    body: str | None = None
+    actor_id: UUID4 | None = None
+    bowl_setup_id: UUID4 | None = None
+    read_at: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class NotificationPageResponse(BaseModel):
+    items: list[NotificationResponse]
+    unread_count: int

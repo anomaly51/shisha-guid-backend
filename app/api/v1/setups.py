@@ -1,7 +1,7 @@
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,6 +21,7 @@ from app.schemas.shisha import (
     BowlSetupResponse,
     BowlSetupTypeCreate,
     BowlSetupTypeResponse,
+    BowlSetupVersionResponse,
     CoalPlacementCreate,
     CoalPlacementResponse,
 )
@@ -123,6 +124,10 @@ async def delete_bowl_setup_type(
 @router.get("/bowl-setups", response_model=list[BowlSetupResponse] | BowlSetupPageResponse)
 async def get_bowl_setups(
     tobacco_ids: list[uuid.UUID] = Query(default_factory=list),
+    search: str | None = Query(default=None, min_length=1),
+    creator_id: uuid.UUID | None = Query(default=None),
+    bookmarked: bool = Query(default=False),
+    following: bool = Query(default=False),
     strength: Literal["all", "light", "medium", "strong", "heavy"] = "all",
     sort: Literal[
         "newest",
@@ -135,10 +140,37 @@ async def get_bowl_setups(
     limit: int | None = Query(default=None, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
 ):
+    if (bookmarked or following) and not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    bookmarked_by = user.id if bookmarked and user else None
+    followed_by = user.id if following and user else None
     if limit is not None:
-        return await crud.get_setups_page(db, tobacco_ids, strength, sort, limit, offset)
-    return await crud.get_all_setups(db, tobacco_ids, strength, sort)
+        return await crud.get_setups_page(
+            db,
+            tobacco_ids,
+            strength,
+            sort,
+            limit,
+            offset,
+            search=search,
+            creator_id=creator_id,
+            bookmarked_by=bookmarked_by,
+            followed_by=followed_by,
+            user_id=user.id if user else None,
+        )
+    return await crud.get_all_setups(
+        db,
+        tobacco_ids,
+        strength,
+        sort,
+        search=search,
+        creator_id=creator_id,
+        bookmarked_by=bookmarked_by,
+        followed_by=followed_by,
+        user_id=user.id if user else None,
+    )
 
 
 @router.post(
@@ -168,8 +200,9 @@ def _get_client_ip(request: Request) -> str | None:
 async def get_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
 ):
-    return await crud.get_setup_by_id(db, item_id)
+    return await crud.get_setup_by_id(db, item_id, user.id if user else None)
 
 
 @router.post("/bowl-setups/{item_id}/views", response_model=BowlSetupResponse)
@@ -257,3 +290,42 @@ async def delete_bowl_setup_review(
     user: User = Depends(get_current_user),
 ):
     await crud.delete_setup_review(db, item_id, review_id, user)
+
+
+@router.get(
+    "/bowl-setups/{item_id}/versions",
+    response_model=list[BowlSetupVersionResponse],
+)
+async def get_bowl_setup_versions(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.get_setup_versions(db, item_id, user)
+
+
+@router.post("/bowl-setups/{item_id}/clone", response_model=BowlSetupResponse)
+async def clone_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.clone_setup(db, item_id, user)
+
+
+@router.post("/bowl-setups/{item_id}/bookmark", response_model=BowlSetupResponse)
+async def bookmark_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.set_setup_bookmark(db, item_id, user, True)
+
+
+@router.delete("/bowl-setups/{item_id}/bookmark", response_model=BowlSetupResponse)
+async def unbookmark_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.set_setup_bookmark(db, item_id, user, False)

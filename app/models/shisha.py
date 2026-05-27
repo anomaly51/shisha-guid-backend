@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -25,6 +25,7 @@ class Tobacco(Base):
     package_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
     strength: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     creator_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id"), nullable=False
@@ -159,6 +160,10 @@ class BowlSetup(Base):
     heaviness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     rating_average: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     rating_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_setup_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("bowl_setups.id"), nullable=True
+    )
 
     creator: Mapped["User"] = relationship("User")
     bowl: Mapped["Bowl"] = relationship("Bowl")
@@ -174,6 +179,9 @@ class BowlSetup(Base):
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
     views: Mapped[list["BowlSetupView"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
+    versions: Mapped[list["BowlSetupVersion"]] = relationship(
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
 
@@ -221,6 +229,22 @@ class BowlSetupTobacco(Base):
 
     bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="tobaccos")
     tobacco: Mapped["Tobacco"] = relationship("Tobacco")
+
+
+class BowlSetupVersion(Base):
+    __tablename__ = "bowl_setup_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="versions")
 
 
 class BowlSetupReview(Base):

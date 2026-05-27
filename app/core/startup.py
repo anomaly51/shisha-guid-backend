@@ -30,11 +30,13 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS badges JSON NOT NULL DEFAULT '[]'",
             "ALTER TABLE users ALTER COLUMN badges TYPE JSONB USING badges::jsonb",
             "UPDATE users SET badges = '[]'::jsonb WHERE badges IS NULL OR jsonb_typeof(badges) <> 'array'",
-            "ALTER TABLE bowl_setups DROP COLUMN IF EXISTS photo_urls",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS views_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS heaviness_score DOUBLE PRECISION",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS rating_average DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS rating_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS photo_urls VARCHAR[] DEFAULT '{}'",
+            "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS source_setup_id UUID REFERENCES bowl_setups(id)",
             "UPDATE bowl_setups SET views_count = 0 WHERE views_count IS NULL",
             """
             UPDATE bowl_setups
@@ -66,6 +68,8 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE bowl_setups ALTER COLUMN rating_average SET NOT NULL",
             "ALTER TABLE bowl_setups ALTER COLUMN rating_count SET DEFAULT 0",
             "ALTER TABLE bowl_setups ALTER COLUMN rating_count SET NOT NULL",
+            "ALTER TABLE bowl_setups ALTER COLUMN version SET DEFAULT 1",
+            "ALTER TABLE bowl_setups ALTER COLUMN version SET NOT NULL",
         ):
             await conn.execute(text(statement))
 
@@ -148,6 +152,46 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
                 END IF;
             END $$;
             """,
+            """
+            CREATE TABLE IF NOT EXISTS user_follows (
+                id UUID PRIMARY KEY,
+                follower_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                followed_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_user_follow_pair UNIQUE (follower_id, followed_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS setup_bookmarks (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_setup_bookmark_user_setup UNIQUE (user_id, bowl_setup_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                bowl_setup_id UUID REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                type VARCHAR NOT NULL,
+                title VARCHAR NOT NULL,
+                body TEXT,
+                read_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS bowl_setup_versions (
+                id UUID PRIMARY KEY,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL,
+                snapshot JSONB NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+            """,
         ):
             await conn.execute(text(statement))
 
@@ -158,6 +202,12 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_heaviness_score ON bowl_setups (heaviness_score)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_rating_average ON bowl_setups (rating_average DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_lower_name ON bowl_setups (lower(name))",
+            "CREATE INDEX IF NOT EXISTS ix_notifications_user_read_created ON notifications (user_id, read_at, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_user_follows_follower_id ON user_follows (follower_id)",
+            "CREATE INDEX IF NOT EXISTS ix_user_follows_followed_id ON user_follows (followed_id)",
+            "CREATE INDEX IF NOT EXISTS ix_setup_bookmarks_user_id ON setup_bookmarks (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_versions_setup_version ON bowl_setup_versions (bowl_setup_id, version DESC)",
             "CREATE INDEX IF NOT EXISTS ix_users_badges_gin ON users USING GIN (badges)",
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_deleted_at ON tobaccos (deleted_at)",
             "CREATE INDEX IF NOT EXISTS ix_coals_deleted_at ON coals (deleted_at)",
