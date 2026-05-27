@@ -11,6 +11,15 @@ from sqlalchemy.orm import selectinload
 
 from app.core.storage import promote_file
 from app.core.email import send_email
+from app.crud.base import (
+    create_item,
+    delete_item,
+    delete_item_for_user,
+    get_all,
+    get_by_id,
+    update_item,
+    update_item_for_user,
+)
 from app.models.shisha import (
     BowlSetup,
     BowlSetupReview,
@@ -191,16 +200,6 @@ async def _refresh_setup_rating(db: AsyncSession, setup_id: uuid.UUID) -> None:
     setup.rating_count = int(count or 0)
 
 
-async def get_all(db: AsyncSession, model, limit: int = 500, offset: int = 0):
-    query = select(model)
-    if hasattr(model, "deleted_at"):
-        query = query.where(model.deleted_at.is_(None))
-    result = await db.execute(
-        query.order_by(model.created_at.desc()).offset(max(0, offset)).limit(max(1, min(limit, 500)))
-    )
-    return result.scalars().all()
-
-
 async def get_filtered_tobaccos(
     db: AsyncSession,
     min_price: int | None = None,
@@ -289,90 +288,6 @@ async def get_coals_page(
         "offset": offset,
         "has_more": offset + len(items) < total,
     }
-
-
-async def get_by_id(db: AsyncSession, model, item_id: uuid.UUID):
-    query = select(model).where(model.id == item_id)
-    if hasattr(model, "deleted_at"):
-        query = query.where(model.deleted_at.is_(None))
-    result = await db.execute(query)
-    item = result.scalars().first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    return item
-
-
-async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
-    data = schema.model_dump()
-    if "photo_urls" in data:
-        data["photo_urls"] = [
-            promote_file(url, model.__tablename__, str(user_id))
-            for url in data["photo_urls"]
-        ]
-    item = model(**data, creator_id=user_id)
-    db.add(item)
-    await db.commit()
-    await db.refresh(item)
-    return item
-
-
-async def update_item(db: AsyncSession, model, item_id: uuid.UUID, schema):
-    item = await get_by_id(db, model, item_id)
-    data = schema.model_dump(exclude_unset=True)
-    if "photo_urls" in data:
-        data["photo_urls"] = [
-            promote_file(url, model.__tablename__) for url in data["photo_urls"]
-        ]
-    for key, value in data.items():
-        setattr(item, key, value)
-    await db.commit()
-    await db.refresh(item)
-    return item
-
-
-async def update_item_for_user(
-    db: AsyncSession,
-    model,
-    item_id: uuid.UUID,
-    schema,
-    user,
-):
-    item = await get_by_id(db, model, item_id)
-    if item.creator_id != user.id and user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    data = schema.model_dump(exclude_unset=True)
-    if "photo_urls" in data:
-        data["photo_urls"] = [
-            promote_file(url, model.__tablename__, str(user.id))
-            for url in data["photo_urls"]
-        ]
-    for key, value in data.items():
-        setattr(item, key, value)
-    await db.commit()
-    await db.refresh(item)
-    return item
-
-
-async def delete_item(db: AsyncSession, model, item_id: uuid.UUID):
-    item = await get_by_id(db, model, item_id)
-    if hasattr(item, "deleted_at"):
-        item.deleted_at = func.now()
-        await db.commit()
-        return
-    await db.delete(item)
-    await db.commit()
-
-
-async def delete_item_for_user(db: AsyncSession, model, item_id: uuid.UUID, user):
-    item = await get_by_id(db, model, item_id)
-    if item.creator_id != user.id and user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    if hasattr(item, "deleted_at"):
-        item.deleted_at = func.now()
-        await db.commit()
-        return
-    await db.delete(item)
-    await db.commit()
 
 
 async def get_all_setups(

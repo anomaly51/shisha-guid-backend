@@ -468,6 +468,11 @@ async def get_agent_capabilities():
     }
 
 
+@router.get("/schema")
+async def get_agent_schema():
+    return AgentSetupDraft.model_json_schema()
+
+
 @router.post("/transcribe", response_model=AgentTranscribeResponse)
 async def transcribe_setup_voice(
     file: UploadFile,
