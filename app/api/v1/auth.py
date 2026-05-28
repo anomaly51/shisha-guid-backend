@@ -1,11 +1,12 @@
 import httpx
 from datetime import datetime
-from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.rate_limit import enforce_rate_limit
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -18,12 +19,7 @@ router = APIRouter()
 
 
 def _is_configured_admin(email: str):
-    admin_emails = {
-        configured_email.strip().lower()
-        for configured_email in settings.ADMIN_EMAILS.split(",")
-        if configured_email.strip()
-    }
-    return email.lower() in admin_emails
+    return email.strip().casefold() in settings.admin_email_set
 
 
 async def _nickname_exists(db: AsyncSession, nickname: str) -> bool:
@@ -35,12 +31,14 @@ async def _nickname_exists(db: AsyncSession, nickname: str) -> bool:
 
 @router.post("/google/token", response_model=TokenResponse)
 async def exchange_google_token(
+    request: Request,
     grant_type: str = Form(...),
     code: str = Form(...),
     redirect_uri: str = Form(...),
     code_verifier: str = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_rate_limit(request, "auth", settings.AUTH_RATE_LIMIT_PER_MINUTE)
     async with httpx.AsyncClient() as client:
         data = {
             "client_id": settings.GOOGLE_CLIENT_ID,
@@ -88,23 +86,16 @@ async def exchange_google_token(
             role="admin" if _is_configured_admin(user_info["email"]) else "user",
             last_seen_at=datetime.utcnow(),
         )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
     else:
-        changed = False
         user.last_seen_at = datetime.utcnow()
-        changed = True
         if not user.avatar_url and user_info.get("picture"):
             user.avatar_url = user_info.get("picture")
-            changed = True
         if _is_configured_admin(user.email) and user.role != "admin":
             user.role = "admin"
-            changed = True
-        if changed:
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
 
     if user.is_banned:
         raise HTTPException(status_code=403, detail="User account is banned")
@@ -119,9 +110,11 @@ async def exchange_google_token(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
+    request: Request,
     payload: TokenRefreshRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    await enforce_rate_limit(request, "auth", settings.AUTH_RATE_LIMIT_PER_MINUTE)
     user = await get_user_from_refresh_token(payload.refresh_token, db)
     return {
         "access_token": create_access_token(data={"sub": str(user.id)}),

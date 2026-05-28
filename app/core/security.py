@@ -69,7 +69,7 @@ async def _get_user_from_token(
             algorithms=[settings.ALGORITHM],
         )
         user_id: str = payload.get("sub")
-        if user_id is None or payload.get("typ", "access") != token_type:
+        if user_id is None or payload.get("typ") != token_type:
             raise credentials_exception
     except jwt.PyJWTError:
         raise credentials_exception
@@ -105,7 +105,9 @@ async def get_optional_current_user(
         return None
     try:
         return await _get_user_from_token(token, db)
-    except HTTPException:
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise
         return None
 
 

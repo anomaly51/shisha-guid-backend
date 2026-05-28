@@ -250,6 +250,7 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_likes_user_id ON bowl_setup_likes (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_source_setup_id ON bowl_setups (source_setup_id)",
             "CREATE INDEX IF NOT EXISTS ix_users_last_seen_at ON users (last_seen_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_users_role ON users (role)",
             "CREATE INDEX IF NOT EXISTS ix_users_badges_gin ON users USING GIN (badges)",
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_deleted_at ON tobaccos (deleted_at)",
             "CREATE INDEX IF NOT EXISTS ix_coals_deleted_at ON coals (deleted_at)",

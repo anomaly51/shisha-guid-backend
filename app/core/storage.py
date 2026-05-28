@@ -19,6 +19,20 @@ minio_client = Minio(
     secure=settings.MINIO_SECURE,
 )
 
+ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
+def detect_image_content_type(content: bytes) -> str | None:
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if content.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 
 def init_minio():
     for _ in range(5):
@@ -107,6 +121,32 @@ def get_file(object_name: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
 
 
+def _validate_stored_image(object_path: str) -> None:
+    response = None
+    try:
+        stat = minio_client.stat_object(settings.MINIO_BUCKET, object_path)
+        if stat.content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+        response = minio_client.get_object(settings.MINIO_BUCKET, object_path, offset=0, length=16)
+        detected = detect_image_content_type(response.read(16))
+        if detected != stat.content_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Stored media content does not match declared image type",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Temporary media not found",
+        ) from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
 def extract_object_path(media_url: str) -> str:
     parsed = urllib.parse.urlparse(media_url)
     object_path = urllib.parse.unquote(parsed.path.lstrip("/"))
@@ -122,6 +162,30 @@ def extract_object_path(media_url: str) -> str:
     return object_path
 
 
+def _is_allowed_media_url(media_url: str) -> bool:
+    parsed = urllib.parse.urlparse(media_url)
+    if not parsed.scheme and media_url.startswith("/api/v1/upload/media/"):
+        return True
+    if parsed.scheme in {"http", "https"} and parsed.path.startswith("/api/v1/upload/media/"):
+        return True
+
+    allowed_prefixes = []
+    if settings.MINIO_PUBLIC_URL:
+        allowed_prefixes.append(settings.MINIO_PUBLIC_URL.rstrip("/") + "/")
+    if settings.API_PUBLIC_URL:
+        allowed_prefixes.append(
+            settings.API_PUBLIC_URL.rstrip("/") + "/api/v1/upload/media/"
+        )
+
+    if not allowed_prefixes:
+        protocol = "https" if settings.MINIO_SECURE else "http"
+        allowed_prefixes.append(
+            f"{protocol}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}/"
+        )
+
+    return any(media_url.startswith(prefix) for prefix in allowed_prefixes)
+
+
 def promote_file(
     temp_url: str,
     permanent_folder: str,
@@ -129,6 +193,11 @@ def promote_file(
 ) -> str:
     if "/temp/" not in temp_url:
         return temp_url
+    if not _is_allowed_media_url(temp_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Temporary media URL does not belong to this storage bucket",
+        )
 
     object_path = extract_object_path(temp_url)
     path_parts = object_path.split("/")
@@ -145,13 +214,7 @@ def promote_file(
     file_name = path_parts[-1]
     new_object_path = f"{user_id}/{permanent_folder}/{file_name}"
 
-    try:
-        minio_client.stat_object(settings.MINIO_BUCKET, object_path)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Temporary media not found",
-        ) from exc
+    _validate_stored_image(object_path)
 
     minio_client.copy_object(
         settings.MINIO_BUCKET,

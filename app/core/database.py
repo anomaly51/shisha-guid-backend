@@ -33,6 +33,9 @@ engine = create_async_engine(
     echo=settings.SQL_ECHO and not settings.SQL_LOG_JSON,
     pool_pre_ping=True,
     pool_recycle=1800,
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
+    pool_timeout=settings.DB_POOL_TIMEOUT,
 )
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False

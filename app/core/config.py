@@ -7,12 +7,21 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str
     GOOGLE_CLIENT_SECRET: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ADMIN_EMAILS: str = ""
     SQL_ECHO: bool = False
     SQL_LOG_JSON: bool = True
     RUN_SCHEMA_BOOTSTRAP: bool = False
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_TIMEOUT: int = 30
+    CATALOG_CACHE_TTL_SECONDS: int = 300
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    DEFAULT_RATE_LIMIT_PER_MINUTE: int = 120
+    UPLOAD_RATE_LIMIT_PER_MINUTE: int = 20
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 30
+    SHUTDOWN_DRAIN_TIMEOUT_SECONDS: float = 10.0
 
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -41,6 +50,14 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+
+    @property
+    def admin_email_set(self) -> set[str]:
+        return {
+            email.strip().casefold()
+            for email in self.ADMIN_EMAILS.split(",")
+            if email.strip()
+        }
 
 
 settings = Settings()

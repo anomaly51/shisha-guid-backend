@@ -1,14 +1,14 @@
 import uuid
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.security import _get_user_from_token, get_current_user, get_optional_current_user
 from app.crud import shisha as crud
 from app.core.storage import promote_file
@@ -401,36 +401,46 @@ async def mark_notifications_read(
 
 @router.get("/notifications/stream")
 async def stream_notifications(
-    token: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
 ):
-    current_user = await _get_user_from_token(token, db)
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    async with AsyncSessionLocal() as db:
+        current_user = await _get_user_from_token(token, db)
+        current_user_id = current_user.id
 
     async def events():
         last_id: uuid.UUID | None = None
-        while True:
-            result = await db.execute(
-                select(Notification)
-                .where(Notification.user_id == current_user.id)
-                .order_by(Notification.created_at.desc())
-                .limit(1)
-            )
-            notification = result.scalars().first()
-            if notification and notification.id != last_id:
-                last_id = notification.id
-                payload = {
-                    "id": str(notification.id),
-                    "type": notification.type,
-                    "title": notification.title,
-                    "body": notification.body,
-                    "actor_id": str(notification.actor_id) if notification.actor_id else None,
-                    "bowl_setup_id": str(notification.bowl_setup_id) if notification.bowl_setup_id else None,
-                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
-                }
-                yield f"event: notification\ndata: {json.dumps(payload)}\n\n"
-            else:
-                yield "event: ping\ndata: {}\n\n"
+        deadline = datetime.utcnow() + timedelta(minutes=5)
+        while datetime.utcnow() < deadline:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Notification)
+                    .where(Notification.user_id == current_user_id)
+                    .order_by(Notification.created_at.desc())
+                    .limit(1)
+                )
+                notification = result.scalars().first()
+                if notification and notification.id != last_id:
+                    last_id = notification.id
+                    payload = {
+                        "id": str(notification.id),
+                        "type": notification.type,
+                        "title": notification.title,
+                        "body": notification.body,
+                        "actor_id": str(notification.actor_id) if notification.actor_id else None,
+                        "bowl_setup_id": str(notification.bowl_setup_id) if notification.bowl_setup_id else None,
+                        "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                    }
+                    yield f"event: notification\ndata: {json.dumps(payload)}\n\n"
+                else:
+                    yield "event: ping\ndata: {}\n\n"
             await asyncio.sleep(15)
+        yield "event: close\ndata: {}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
 

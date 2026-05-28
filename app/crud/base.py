@@ -67,11 +67,7 @@ async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
 
 async def update_item(db: AsyncSession, model, item_id: uuid.UUID, schema):
     item = await get_by_id(db, model, item_id)
-    data = _promote_photo_urls_for_user(
-        model,
-        schema.model_dump(exclude_unset=True),
-        user.id,
-    )
+    data = _promote_photo_urls(model, schema.model_dump(exclude_unset=True))
     for key, value in data.items():
         setattr(item, key, value)
     await db.commit()

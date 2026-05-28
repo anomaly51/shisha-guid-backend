@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import catalog_cache
 from app.core.database import get_db
 from app.core.security import (
     get_current_admin_user,
@@ -42,7 +43,10 @@ async def get_coal_placements(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    return await crud.get_all(db, CoalPlacement, limit=limit, offset=offset)
+    return await catalog_cache.get_or_set(
+        f"coal-placements:{limit}:{offset}",
+        lambda: crud.get_all(db, CoalPlacement, limit=limit, offset=offset),
+    )
 
 
 @router.post(
@@ -55,7 +59,9 @@ async def create_coal_placement(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_admin_user),
 ):
-    return await crud.create_item(db, CoalPlacement, item, user.id)
+    created = await crud.create_item(db, CoalPlacement, item, user.id)
+    await catalog_cache.clear_prefix("coal-placements:")
+    return created
 
 
 @router.get("/coal-placements/{item_id}", response_model=CoalPlacementResponse)
@@ -70,7 +76,9 @@ async def update_coal_placement(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_admin_user),
 ):
-    return await crud.update_item_for_user(db, CoalPlacement, item_id, item, user)
+    updated = await crud.update_item_for_user(db, CoalPlacement, item_id, item, user)
+    await catalog_cache.clear_prefix("coal-placements:")
+    return updated
 
 
 @router.delete("/coal-placements/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -80,6 +88,7 @@ async def delete_coal_placement(
     user: User = Depends(get_current_admin_user),
 ):
     await crud.delete_item_for_user(db, CoalPlacement, item_id, user)
+    await catalog_cache.clear_prefix("coal-placements:")
 
 
 @router.get("/bowl-setup-types", response_model=list[BowlSetupTypeResponse])
@@ -88,7 +97,10 @@ async def get_bowl_setup_types(
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    return await crud.get_all(db, BowlSetupType, limit=limit, offset=offset)
+    return await catalog_cache.get_or_set(
+        f"bowl-setup-types:{limit}:{offset}",
+        lambda: crud.get_all(db, BowlSetupType, limit=limit, offset=offset),
+    )
 
 
 @router.post(
@@ -101,7 +113,9 @@ async def create_bowl_setup_type(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_admin_user),
 ):
-    return await crud.create_item(db, BowlSetupType, item, user.id)
+    created = await crud.create_item(db, BowlSetupType, item, user.id)
+    await catalog_cache.clear_prefix("bowl-setup-types:")
+    return created
 
 
 @router.get("/bowl-setup-types/{item_id}", response_model=BowlSetupTypeResponse)
@@ -116,7 +130,9 @@ async def update_bowl_setup_type(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_admin_user),
 ):
-    return await crud.update_item_for_user(db, BowlSetupType, item_id, item, user)
+    updated = await crud.update_item_for_user(db, BowlSetupType, item_id, item, user)
+    await catalog_cache.clear_prefix("bowl-setup-types:")
+    return updated
 
 
 @router.delete("/bowl-setup-types/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -126,6 +142,7 @@ async def delete_bowl_setup_type(
     user: User = Depends(get_current_admin_user),
 ):
     await crud.delete_item_for_user(db, BowlSetupType, item_id, user)
+    await catalog_cache.clear_prefix("bowl-setup-types:")
 
 
 @router.get("/bowl-setups", response_model=list[BowlSetupResponse] | BowlSetupPageResponse)

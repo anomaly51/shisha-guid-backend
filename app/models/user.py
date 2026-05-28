@@ -15,7 +15,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     nickname: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    role: Mapped[str] = mapped_column(String, nullable=False, default="user")
+    role: Mapped[str] = mapped_column(String, nullable=False, default="user", index=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     badges: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -11,7 +11,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.storage import promote_file
+from app.core.storage import extract_object_path, promote_file
 from app.core.email import send_email
 from app.crud.base import (
     create_item,
@@ -31,12 +31,12 @@ from app.models.shisha import (
     BowlSetupTobacco,
     BowlSetupVersion,
     BowlSetupView,
-    Coal,
     Report,
     ReviewReply,
     Tobacco,
 )
 from app.models.user import Notification, SetupBookmark, User, UserFollow
+from app.utils.strength import STRENGTH_RANGES, clamp as _clamp, get_tobacco_strength
 
 
 VIEW_INTERVAL = timedelta(minutes=30)
@@ -49,69 +49,9 @@ AUTO_BADGES = {
 }
 
 
-STRENGTH_RANGES = {
-    "light": (0, 4.49),
-    "medium": (4.5, 6.49),
-    "strong": (6.5, 7.99),
-    "heavy": (8, 10),
-}
-
-
-def _clamp(value: float, minimum: float, maximum: float) -> float:
-    return min(maximum, max(minimum, value))
-
-
 async def _send_email_async(to: str, subject: str, body: str) -> None:
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, send_email, to, subject, body)
-
-
-def get_tobacco_strength(tobacco) -> float:
-    explicit_value = next(
-        (
-            value
-            for value in (
-                getattr(tobacco, "strength", None),
-                getattr(tobacco, "heaviness", None),
-                getattr(tobacco, "nicotine_strength", None),
-                getattr(tobacco, "nicotine", None),
-            )
-            if value is not None
-        ),
-        None,
-    )
-    if explicit_value is not None:
-        try:
-            numeric = float(explicit_value)
-            if numeric >= 0:
-                return _clamp(numeric, 0, 10)
-        except (TypeError, ValueError):
-            pass
-
-    text = f"{getattr(tobacco, 'name', '') or ''} {getattr(tobacco, 'description', '') or ''}".lower()
-    score = 5
-
-    if "darkside" in text:
-        score += 3
-    if "blackburn" in text or "strong" in text or "креп" in text:
-        score += 2
-    if "musthave" in text or "sebero" in text:
-        score += 1
-    if "duft" in text or "mango" in text or "слив" in text or "мягк" in text:
-        score -= 1
-    if "element" in text or "banana" in text or "milk" in text or "легк" in text:
-        score -= 2
-
-    return _clamp(score, 0, 10)
-
-
-def _matches_strength(value: float, strength: str | None) -> bool:
-    if not strength or strength == "all":
-        return True
-    strength_range = STRENGTH_RANGES.get(strength)
-    if not strength_range:
-        return True
-    return strength_range[0] <= value <= strength_range[1]
 
 
 def get_setup_heaviness(setup: BowlSetup) -> float:
@@ -129,13 +69,6 @@ def get_setup_heaviness(setup: BowlSetup) -> float:
         value += get_tobacco_strength(item.tobacco) * (int(item.percentage or 0) / total)
 
     return _clamp(value, 0, 10)
-
-
-def _setup_rating(setup: BowlSetup) -> float:
-    if setup.rating_average is not None:
-        return round(float(setup.rating_average), 1)
-    ratings = [review.rating for review in setup.reviews or []]
-    return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
 def _notification(
@@ -158,10 +91,12 @@ def _notification(
 
 
 def _snapshot_setup(setup: BowlSetup) -> dict:
+    photo_urls = setup.photo_urls or []
     return {
         "name": setup.name,
         "description": setup.description,
-        "photo_urls": setup.photo_urls or [],
+        "photo_urls": photo_urls,
+        "photo_object_paths": [extract_object_path(url) for url in photo_urls],
         "tags": setup.tags or [],
         "bowl_id": str(setup.bowl_id),
         "kaloud_id": str(setup.kaloud_id),
@@ -301,9 +236,14 @@ async def _refresh_setup_rating(db: AsyncSession, setup_id: uuid.UUID) -> None:
         ).where(BowlSetupReview.bowl_setup_id == setup_id)
     )
     average, count = result.one()
-    setup = await get_setup_by_id(db, setup_id)
-    setup.rating_average = round(float(average or 0), 1)
-    setup.rating_count = int(count or 0)
+    await db.execute(
+        update(BowlSetup)
+        .where(BowlSetup.id == setup_id)
+        .values(
+            rating_average=round(float(average or 0), 1),
+            rating_count=int(count or 0),
+        )
+    )
 
 
 async def _refresh_tobacco_setup_counts(db: AsyncSession, tobacco_ids: set[uuid.UUID]) -> None:
@@ -321,96 +261,6 @@ async def _refresh_tobacco_setup_counts(db: AsyncSession, tobacco_ids: set[uuid.
             .where(Tobacco.id == tobacco_id)
             .values(setups_count=counts.get(tobacco_id, 0))
         )
-
-
-async def get_filtered_tobaccos(
-    db: AsyncSession,
-    min_price: int | None = None,
-    max_price: int | None = None,
-    strength: str | None = None,
-    search: str | None = None,
-):
-    query = select(Tobacco).where(Tobacco.deleted_at.is_(None))
-    if min_price is not None:
-        query = query.where(Tobacco.price >= min_price)
-    if max_price is not None:
-        query = query.where(Tobacco.price <= max_price)
-    if search:
-        normalized = f"%{search.strip()}%"
-        query = query.where(
-            Tobacco.name.ilike(normalized) | Tobacco.description.ilike(normalized)
-        )
-
-    result = await db.execute(query.order_by(func.lower(Tobacco.name)))
-    tobaccos = result.scalars().all()
-    return [
-        tobacco
-        for tobacco in tobaccos
-        if _matches_strength(get_tobacco_strength(tobacco), strength)
-    ]
-
-
-async def get_tobaccos_page(
-    db: AsyncSession,
-    min_price: int | None = None,
-    max_price: int | None = None,
-    strength: str | None = None,
-    search: str | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-):
-    limit = max(1, min(limit or 24, 100))
-    offset = max(0, offset)
-    tobaccos = await get_filtered_tobaccos(
-        db,
-        min_price=min_price,
-        max_price=max_price,
-        strength=strength,
-        search=search,
-    )
-    total = len(tobaccos)
-    items = tobaccos[offset:offset + limit]
-    return {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": offset + len(items) < total,
-    }
-
-
-async def get_coals_page(
-    db: AsyncSession,
-    search: str | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-):
-    limit = max(1, min(limit or 24, 100))
-    offset = max(0, offset)
-    query = select(Coal).where(Coal.deleted_at.is_(None))
-
-    if search:
-        normalized = f"%{search.strip()}%"
-        query = query.where(
-            Coal.name.ilike(normalized) | Coal.description.ilike(normalized)
-        )
-
-    total_result = await db.execute(
-        select(func.count()).select_from(query.subquery())
-    )
-    total = total_result.scalar_one()
-    result = await db.execute(
-        query.order_by(func.lower(Coal.name)).offset(offset).limit(limit)
-    )
-    items = result.scalars().all()
-
-    return {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": offset + len(items) < total,
-    }
 
 
 async def get_all_setups(
@@ -506,64 +356,32 @@ async def get_setups_page(
                 BowlSetup.heaviness_score <= strength_range[1],
             )
 
-    can_page_in_db = sort in {"newest", "views", "name", "rating", "strengthDesc", "strengthAsc"}
-
-    if can_page_in_db:
-        total_result = await db.execute(
-            select(func.count()).select_from(query.order_by(None).subquery())
-        )
-        total = total_result.scalar_one()
-
-        if sort == "views":
-            query = query.order_by(BowlSetup.views_count.desc(), BowlSetup.created_at.desc())
-        elif sort == "rating":
-            query = query.order_by(BowlSetup.rating_average.desc(), BowlSetup.created_at.desc())
-        elif sort == "strengthDesc":
-            query = query.order_by(BowlSetup.heaviness_score.desc().nullslast(), BowlSetup.created_at.desc())
-        elif sort == "strengthAsc":
-            query = query.order_by(BowlSetup.heaviness_score.asc().nullslast(), BowlSetup.created_at.desc())
-        elif sort == "name":
-            query = query.order_by(func.lower(BowlSetup.name), BowlSetup.created_at.desc())
-        else:
-            query = query.order_by(BowlSetup.is_featured.desc(), BowlSetup.created_at.desc())
-
-        result = await db.execute(query.offset(offset).limit(limit))
-        items = result.scalars().all()
-        await _decorate_setups(db, items, user_id)
-        return {
-            "items": items,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "has_more": offset + len(items) < total,
-        }
-
-    result = await db.execute(
-        query
+    total_result = await db.execute(
+        select(func.count()).select_from(query.order_by(None).subquery())
     )
-    setups = result.scalars().all()
+    total = total_result.scalar_one()
 
-    setups = [
-        setup
-        for setup in setups
-        if _matches_strength(get_setup_heaviness(setup), strength)
-    ]
-
-    if sort == "rating":
-        setups = sorted(setups, key=_setup_rating, reverse=True)
-    elif sort == "views":
-        setups = sorted(setups, key=lambda setup: setup.views_count or 0, reverse=True)
+    if sort == "views":
+        query = query.order_by(BowlSetup.views_count.desc(), BowlSetup.created_at.desc())
+    elif sort == "rating":
+        query = query.order_by(BowlSetup.rating_average.desc(), BowlSetup.created_at.desc())
     elif sort == "strengthDesc":
-        setups = sorted(setups, key=get_setup_heaviness, reverse=True)
+        query = query.order_by(
+            BowlSetup.heaviness_score.desc().nullslast(),
+            BowlSetup.created_at.desc(),
+        )
     elif sort == "strengthAsc":
-        setups = sorted(setups, key=get_setup_heaviness)
+        query = query.order_by(
+            BowlSetup.heaviness_score.asc().nullslast(),
+            BowlSetup.created_at.desc(),
+        )
     elif sort == "name":
-        setups = sorted(setups, key=lambda setup: (setup.name or "").lower())
+        query = query.order_by(func.lower(BowlSetup.name), BowlSetup.created_at.desc())
     else:
-        setups = sorted(setups, key=lambda setup: setup.created_at, reverse=True)
+        query = query.order_by(BowlSetup.is_featured.desc(), BowlSetup.created_at.desc())
 
-    total = len(setups)
-    items = setups[offset:offset + limit]
+    result = await db.execute(query.offset(offset).limit(limit))
+    items = result.scalars().all()
     await _decorate_setups(db, items, user_id)
     return {
         "items": items,
@@ -686,6 +504,7 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
                 percentage=tob.percentage,
             )
         )
+    await db.flush()
     await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in schema.tobaccos})
     if user:
         setups_count = await db.scalar(

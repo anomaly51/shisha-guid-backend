@@ -28,6 +28,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _rate_limits: dict[str, deque[datetime]] = defaultdict(deque)
+# Per-process fallback limiter. In multi-worker production deployments this must
+# be replaced by a shared backend such as Redis to enforce a global limit.
 RATE_LIMIT_RETENTION = timedelta(minutes=5)
 
 REQUIRED_FIELDS = {
