@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.cache import catalog_cache
 from app.core.database import get_db
 from app.core.security import get_current_admin_user
 from app.crud import shisha as crud
@@ -50,6 +51,12 @@ CONTENT_MODELS = {
     "coal-placements": CoalPlacement,
     "bowl-setup-types": BowlSetupType,
     "bowl-setups": BowlSetup,
+}
+CACHE_PREFIXES = {
+    "bowls": "bowls:",
+    "kalouds": "kalouds:",
+    "coal-placements": "coal-placements:",
+    "bowl-setup-types": "bowl-setup-types:",
 }
 REPORT_STATUSES = {"pending", "resolved", "dismissed"}
 
@@ -218,12 +225,19 @@ async def list_content(db: AsyncSession = Depends(get_db)):
 async def delete_content(
     content_type: str,
     item_id: uuid.UUID,
+    admin: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     model = CONTENT_MODELS.get(content_type)
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if model is BowlSetup:
+        await crud.delete_setup_for_user(db, item_id, admin)
+        return
     await crud.delete_item(db, model, item_id)
+    cache_prefix = CACHE_PREFIXES.get(content_type)
+    if cache_prefix:
+        await catalog_cache.clear_prefix(cache_prefix)
 
 
 @router.get("/reports", response_model=list[ReportResponse])

@@ -536,9 +536,11 @@ async def get_agent_schema():
 
 @router.post("/transcribe", response_model=AgentTranscribeResponse)
 async def transcribe_setup_voice(
+    http_request: Request,
     file: UploadFile,
     user: User = Depends(get_current_user),
 ):
+    _enforce_agent_rate_limit(http_request, user)
     if not settings.OPENAI_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -548,6 +550,11 @@ async def transcribe_setup_voice(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty audio")
+    if len(content) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio file is too large",
+        )
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(

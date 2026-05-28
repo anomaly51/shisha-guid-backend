@@ -262,6 +262,9 @@ async def read_public_user_followers(
     viewer: User | None = Depends(get_optional_current_user),
 ):
     safe_limit = max(1, min(limit, 100))
+    user = await db.get(User, user_id)
+    if not user or user.is_banned:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     result = await db.execute(
         select(User)
         .join(UserFollow, UserFollow.follower_id == User.id)
@@ -280,6 +283,9 @@ async def read_public_user_following(
     viewer: User | None = Depends(get_optional_current_user),
 ):
     safe_limit = max(1, min(limit, 100))
+    user = await db.get(User, user_id)
+    if not user or user.is_banned:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     result = await db.execute(
         select(User)
         .join(UserFollow, UserFollow.followed_id == User.id)
@@ -347,7 +353,7 @@ async def unfollow_user(
     current_user: User = Depends(get_current_user),
 ):
     user = await db.get(User, user_id)
-    if not user:
+    if not user or user.is_banned:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     result = await db.execute(
         select(UserFollow).where(
@@ -481,6 +487,17 @@ async def create_collection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    existing = await db.scalar(
+        select(SetupCollection.id).where(
+            SetupCollection.user_id == current_user.id,
+            func.lower(SetupCollection.name) == item.name.lower(),
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Collection with this name already exists",
+        )
     collection = SetupCollection(user_id=current_user.id, name=item.name)
     db.add(collection)
     await db.commit()
