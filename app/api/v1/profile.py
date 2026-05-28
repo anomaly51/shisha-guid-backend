@@ -7,14 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user, get_optional_current_user
+from app.crud import shisha as crud
 from app.core.storage import promote_file
-from app.models.shisha import BowlSetup
+from app.models.shisha import BowlSetup, BowlSetupReview
 from app.models.user import Notification, User, UserFollow
+from app.schemas.shisha import BowlSetupPageResponse
 from app.schemas.user import (
     NotificationPageResponse,
     PublicUserResponse,
     UserProfileResponse,
     UserProfileUpdate,
+    UserActivityResponse,
 )
 
 router = APIRouter()
@@ -35,11 +38,18 @@ async def _public_user_payload(
         select(func.count(UserFollow.id)).where(UserFollow.follower_id == user.id)
     )
     is_following = False
+    is_followed_by = False
     if viewer:
         is_following = bool(await db.scalar(
             select(UserFollow.id).where(
                 UserFollow.follower_id == viewer.id,
                 UserFollow.followed_id == user.id,
+            )
+        ))
+        is_followed_by = bool(await db.scalar(
+            select(UserFollow.id).where(
+                UserFollow.follower_id == user.id,
+                UserFollow.followed_id == viewer.id,
             )
         ))
     return {
@@ -49,16 +59,67 @@ async def _public_user_payload(
         "avatar_url": user.avatar_url,
         "role": user.role,
         "badges": user.badges,
+        "last_seen_at": user.last_seen_at,
         "setups_count": int(setups_count or 0),
         "followers_count": int(followers_count or 0),
         "following_count": int(following_count or 0),
         "is_following": is_following,
+        "is_followed_by": is_followed_by,
     }
 
 
 @router.get("/me", response_model=UserProfileResponse)
-async def read_profile_me(current_user: User = Depends(get_current_user)):
+async def read_profile_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    current_user.last_seen_at = datetime.utcnow()
+    db.add(current_user)
+    await db.commit()
+    await db.refresh(current_user)
     return current_user
+
+
+@router.get("/activity", response_model=list[UserActivityResponse])
+async def read_profile_activity(
+    limit: int = 30,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    safe_limit = max(1, min(limit, 100))
+    created_result = await db.execute(
+        select(BowlSetup)
+        .where(BowlSetup.creator_id == current_user.id)
+        .order_by(BowlSetup.created_at.desc())
+        .limit(safe_limit)
+    )
+    reviewed_result = await db.execute(
+        select(BowlSetupReview, BowlSetup)
+        .join(BowlSetup, BowlSetup.id == BowlSetupReview.bowl_setup_id)
+        .where(BowlSetupReview.creator_id == current_user.id)
+        .order_by(BowlSetupReview.created_at.desc())
+        .limit(safe_limit)
+    )
+
+    items: list[dict] = []
+    for setup in created_result.scalars().all():
+        items.append({
+            "id": f"setup:{setup.id}",
+            "type": "setup_cloned" if setup.source_setup_id else "setup_created",
+            "title": f"Клонировал забивку {setup.name}" if setup.source_setup_id else f"Создал забивку {setup.name}",
+            "setup_id": setup.id,
+            "created_at": setup.created_at,
+        })
+    for review, setup in reviewed_result.all():
+        items.append({
+            "id": f"review:{review.id}",
+            "type": "review_created",
+            "title": f"Оставил отзыв на {setup.name}",
+            "setup_id": setup.id,
+            "created_at": review.created_at,
+        })
+
+    return sorted(items, key=lambda item: item["created_at"], reverse=True)[:safe_limit]
 
 
 @router.patch("/me", response_model=UserProfileResponse)
@@ -93,6 +154,47 @@ async def update_profile_me(
     return current_user
 
 
+@router.get("/users", response_model=list[PublicUserResponse])
+async def search_public_users(
+    nickname: str | None = None,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_current_user),
+):
+    safe_limit = max(1, min(limit, 50))
+    query = select(User).where(User.is_banned.is_(False))
+    if nickname:
+        normalized = f"%{nickname.strip()}%"
+        query = query.where(User.nickname.ilike(normalized))
+    query = query.order_by(func.lower(User.nickname).nullslast(), User.email).limit(safe_limit)
+    result = await db.execute(query)
+    return [
+        await _public_user_payload(db, user, viewer)
+        for user in result.scalars().all()
+    ]
+
+
+@router.get("/top-authors", response_model=list[PublicUserResponse])
+async def get_top_authors(
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_current_user),
+):
+    safe_limit = max(1, min(limit, 50))
+    result = await db.execute(
+        select(User, func.count(BowlSetup.id).label("setups_total"))
+        .join(BowlSetup, BowlSetup.creator_id == User.id)
+        .where(User.is_banned.is_(False))
+        .group_by(User.id)
+        .order_by(func.count(BowlSetup.id).desc(), func.lower(User.nickname).nullslast())
+        .limit(safe_limit)
+    )
+    return [
+        await _public_user_payload(db, user, viewer)
+        for user, _setups_total in result.all()
+    ]
+
+
 @router.get("/users/{user_id}", response_model=PublicUserResponse)
 async def read_public_user(
     user_id: uuid.UUID,
@@ -103,6 +205,26 @@ async def read_public_user(
     if not user or user.is_banned:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return await _public_user_payload(db, user, viewer)
+
+
+@router.get("/users/{user_id}/setups", response_model=BowlSetupPageResponse)
+async def read_public_user_setups(
+    user_id: uuid.UUID,
+    limit: int = 24,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_current_user),
+):
+    user = await db.get(User, user_id)
+    if not user or user.is_banned:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return await crud.get_setups_page(
+        db,
+        creator_id=user_id,
+        limit=limit,
+        offset=offset,
+        user_id=viewer.id if viewer else None,
+    )
 
 
 @router.post("/users/{user_id}/follow", response_model=PublicUserResponse)
@@ -124,6 +246,13 @@ async def follow_user(
     )
     if not existing:
         db.add(UserFollow(follower_id=current_user.id, followed_id=user_id))
+        db.add(Notification(
+            user_id=user_id,
+            actor_id=current_user.id,
+            type="user_followed",
+            title="New follower",
+            body=f"{current_user.display_name} (/users/{current_user.id}) followed you.",
+        ))
         await db.commit()
     return await _public_user_payload(db, user, current_user)
 

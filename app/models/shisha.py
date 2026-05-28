@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -24,6 +24,7 @@ class Tobacco(Base):
     price_currency: Mapped[str] = mapped_column(String, nullable=False, default="UAH")
     package_grams: Mapped[int | None] = mapped_column(Integer, nullable=True)
     strength: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    setups_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     photo_urls: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
@@ -156,6 +157,8 @@ class BowlSetup(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    tags: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    is_featured: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     views_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     heaviness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     rating_average: Mapped[float] = mapped_column(Float, nullable=False, default=0)
@@ -176,6 +179,12 @@ class BowlSetup(Base):
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
     reviews: Mapped[list["BowlSetupReview"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
+    comments: Mapped[list["BowlSetupComment"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
+    likes: Mapped[list["BowlSetupLike"]] = relationship(
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
     views: Mapped[list["BowlSetupView"]] = relationship(
@@ -272,3 +281,47 @@ class BowlSetupReview(Base):
 
     bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="reviews")
     creator: Mapped["User"] = relationship("User")
+
+
+class BowlSetupComment(Base):
+    __tablename__ = "bowl_setup_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="comments")
+    creator: Mapped["User"] = relationship("User")
+
+
+class BowlSetupLike(Base):
+    __tablename__ = "bowl_setup_likes"
+    __table_args__ = (
+        UniqueConstraint(
+            "bowl_setup_id",
+            "user_id",
+            name="uq_bowl_setup_like_user",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="likes")
+    user: Mapped["User"] = relationship("User")

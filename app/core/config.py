@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = ""
     SQL_ECHO: bool = False
     SQL_LOG_JSON: bool = True
-    RUN_SCHEMA_BOOTSTRAP: bool = True
+    RUN_SCHEMA_BOOTSTRAP: bool = False
 
     MINIO_ENDPOINT: str = "minio:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = "sao10k/l3-lunaris-8b"
     AGENT_CATALOG_LIMIT: int = 300
     AGENT_RATE_LIMIT_PER_MINUTE: int = 12
+    REVIEW_RATE_LIMIT_PER_DAY: int = 30
     OPENAI_API_KEY: str | None = None
     OPENAI_TRANSCRIBE_MODEL: str = "whisper-1"
     SMTP_HOST: str | None = None

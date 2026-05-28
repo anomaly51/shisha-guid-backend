@@ -28,6 +28,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _rate_limits: dict[str, deque[datetime]] = defaultdict(deque)
+RATE_LIMIT_RETENTION = timedelta(minutes=5)
 
 REQUIRED_FIELDS = {
     "name": "название забивки",
@@ -164,6 +165,36 @@ def _normalize_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").casefold().replace("ё", "е")).strip()
 
 
+def _trim_catalog_for_request(
+    catalog: dict[str, list[dict[str, Any]]],
+    request: AgentChatRequest,
+) -> dict[str, list[dict[str, Any]]]:
+    text = _normalize_text(" ".join(message.content for message in request.messages[-6:]))
+    draft_payload = request.draft.model_dump() if request.draft else {}
+    selected_ids = {
+        value
+        for key, value in draft_payload.items()
+        if key.endswith("_id") and isinstance(value, str)
+    }
+    for item in draft_payload.get("tobaccos") or []:
+        tobacco_id = item.get("tobacco_id") if isinstance(item, dict) else None
+        if tobacco_id:
+            selected_ids.add(tobacco_id)
+
+    trimmed: dict[str, list[dict[str, Any]]] = {}
+    for key, items in catalog.items():
+        relevant = [
+            item for item in items
+            if item["id"] in selected_ids
+            or _normalize_text(item["name"]) in text
+            or any(token and token in _normalize_text(item["name"]) for token in text.split() if len(token) >= 4)
+        ]
+        if len(relevant) < 8:
+            relevant = [*relevant, *[item for item in items if item not in relevant][: 12 - len(relevant)]]
+        trimmed[key] = relevant[:40]
+    return trimmed
+
+
 def _catalog_item_by_name(
     catalog: dict[str, list[dict[str, Any]]],
     catalog_name: str,
@@ -282,6 +313,13 @@ def _enforce_agent_rate_limit(request: Request, user: User | None) -> None:
     limit = max(1, settings.AGENT_RATE_LIMIT_PER_MINUTE)
     now = datetime.utcnow()
     cutoff = now - timedelta(minutes=1)
+    retention_cutoff = now - RATE_LIMIT_RETENTION
+    for key in list(_rate_limits.keys()):
+        bucket_for_key = _rate_limits[key]
+        while bucket_for_key and bucket_for_key[0] <= retention_cutoff:
+            bucket_for_key.popleft()
+        if not bucket_for_key:
+            _rate_limits.pop(key, None)
     bucket = _rate_limits[_rate_limit_key(request, user)]
     while bucket and bucket[0] <= cutoff:
         bucket.popleft()
@@ -468,7 +506,7 @@ async def chat_with_setup_agent(
             created_setup_id=str(setup.id),
         )
 
-    agent_result = await _ask_openrouter(request, catalog)
+    agent_result = await _ask_openrouter(request, _trim_catalog_for_request(catalog, request))
     draft = _sanitize_draft(_merge_drafts(request.draft, agent_result.get("draft")), catalog)
     missing = _missing_fields(draft)
     action = agent_result.get("action")

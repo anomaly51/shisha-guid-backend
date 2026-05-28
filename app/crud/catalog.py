@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -143,6 +143,33 @@ def _matches_search(item, search: str | None) -> bool:
     return any(term in haystack for term in terms)
 
 
+def _apply_search(query, model, search: str | None):
+    terms = _search_terms(search)
+    if not terms:
+        return query
+    conditions = []
+    for term in terms:
+        pattern = f"%{term}%"
+        conditions.append(func.lower(model.name).ilike(pattern))
+        if hasattr(model, "brand"):
+            conditions.append(func.lower(func.coalesce(model.brand, "")).ilike(pattern))
+        conditions.append(func.lower(func.coalesce(model.description, "")).ilike(pattern))
+    return query.where(or_(*conditions))
+
+
+def _apply_tobacco_strength(query, strength: str | None):
+    if not strength or strength == "all":
+        return query
+    strength_range = STRENGTH_RANGES.get(strength)
+    if not strength_range:
+        return query
+    strength_value = func.coalesce(Tobacco.strength, 5)
+    return query.where(
+        strength_value >= strength_range[0],
+        strength_value <= strength_range[1],
+    )
+
+
 async def get_filtered_tobaccos(
     db: AsyncSession,
     min_price: int | None = None,
@@ -151,21 +178,17 @@ async def get_filtered_tobaccos(
     search: str | None = None,
     brand: str | None = None,
 ):
-    query = select(Tobacco)
+    query = select(Tobacco).where(Tobacco.deleted_at.is_(None))
     if min_price is not None:
         query = query.where(Tobacco.price >= min_price)
     if max_price is not None:
         query = query.where(Tobacco.price <= max_price)
     if brand:
         query = query.where(func.lower(Tobacco.brand) == brand.strip().lower())
+    query = _apply_tobacco_strength(query, strength)
+    query = _apply_search(query, Tobacco, search)
     result = await db.execute(query.order_by(func.lower(Tobacco.name)))
-    tobaccos = result.scalars().all()
-    return [
-        tobacco
-        for tobacco in tobaccos
-        if matches_strength(get_tobacco_strength(tobacco), strength)
-        and _matches_search(tobacco, search)
-    ]
+    return result.scalars().all()
 
 
 async def get_tobaccos_page(
@@ -180,16 +203,21 @@ async def get_tobaccos_page(
 ):
     limit = max(1, min(limit or 24, 100))
     offset = max(0, offset)
-    tobaccos = await get_filtered_tobaccos(
-        db,
-        min_price=min_price,
-        max_price=max_price,
-        strength=strength,
-        search=search,
-        brand=brand,
+    query = select(Tobacco).where(Tobacco.deleted_at.is_(None))
+    if min_price is not None:
+        query = query.where(Tobacco.price >= min_price)
+    if max_price is not None:
+        query = query.where(Tobacco.price <= max_price)
+    if brand:
+        query = query.where(func.lower(Tobacco.brand) == brand.strip().lower())
+    query = _apply_tobacco_strength(query, strength)
+    query = _apply_search(query, Tobacco, search)
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar_one()
+    result = await db.execute(
+        query.order_by(func.lower(Tobacco.name)).offset(offset).limit(limit)
     )
-    total = len(tobaccos)
-    items = tobaccos[offset : offset + limit]
+    items = result.scalars().all()
     return {
         "items": items,
         "total": total,
@@ -207,12 +235,14 @@ async def get_coals_page(
 ):
     limit = max(1, min(limit or 24, 100))
     offset = max(0, offset)
-    query = select(Coal)
+    query = _apply_search(select(Coal).where(Coal.deleted_at.is_(None)), Coal, search)
 
-    result = await db.execute(query.order_by(func.lower(Coal.name)))
-    coals = [coal for coal in result.scalars().all() if _matches_search(coal, search)]
-    total = len(coals)
-    items = coals[offset : offset + limit]
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar_one()
+    result = await db.execute(
+        query.order_by(func.lower(Coal.name)).offset(offset).limit(limit)
+    )
+    items = result.scalars().all()
 
     return {
         "items": items,

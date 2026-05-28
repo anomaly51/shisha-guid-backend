@@ -1,6 +1,8 @@
 from .shisha import (
     Bowl,
     BowlSetup,
+    BowlSetupComment,
+    BowlSetupLike,
     BowlSetupReview,
     BowlSetupTobacco,
     BowlSetupType,
@@ -16,6 +18,8 @@ from .user import Notification, SetupBookmark, User, UserFollow
 __all__ = [
     "Bowl",
     "BowlSetup",
+    "BowlSetupComment",
+    "BowlSetupLike",
     "BowlSetupReview",
     "BowlSetupTobacco",
     "BowlSetupType",

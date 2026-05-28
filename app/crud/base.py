@@ -48,6 +48,16 @@ def _promote_photo_urls_for_user(model, data: dict, user_id: uuid.UUID) -> dict:
 
 async def create_item(db: AsyncSession, model, schema, user_id: uuid.UUID):
     data = _promote_photo_urls_for_user(model, schema.model_dump(), user_id)
+    if data.get("name") and hasattr(model, "name"):
+        query = select(model.id).where(func.lower(model.name) == data["name"].strip().lower())
+        if hasattr(model, "deleted_at"):
+            query = query.where(model.deleted_at.is_(None))
+        existing = await db.scalar(query.limit(1))
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Item with this name already exists",
+            )
     item = model(**data, creator_id=user_id)
     db.add(item)
     await db.commit()

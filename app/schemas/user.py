@@ -49,6 +49,7 @@ class UserProfileResponse(BaseModel):
     role: str = "user"
     is_banned: bool = False
     badges: list[UserBadge] = Field(default_factory=list)
+    last_seen_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,8 +86,18 @@ class PublicUserResponse(BaseModel):
     followers_count: int = 0
     following_count: int = 0
     is_following: bool = False
+    is_followed_by: bool = False
+    last_seen_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserActivityResponse(BaseModel):
+    id: str
+    type: str
+    title: str
+    setup_id: UUID4 | None = None
+    created_at: datetime
 
 
 class NotificationResponse(BaseModel):

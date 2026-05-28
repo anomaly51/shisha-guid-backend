@@ -28,6 +28,7 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR NOT NULL DEFAULT 'user'",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS badges JSON NOT NULL DEFAULT '[]'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ",
             "ALTER TABLE users ALTER COLUMN badges TYPE JSONB USING badges::jsonb",
             "UPDATE users SET badges = '[]'::jsonb WHERE badges IS NULL OR jsonb_typeof(badges) <> 'array'",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS views_count INTEGER NOT NULL DEFAULT 0",
@@ -35,8 +36,11 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS rating_average DOUBLE PRECISION NOT NULL DEFAULT 0",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS rating_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS photo_urls VARCHAR[] DEFAULT '{}'",
+            "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS tags VARCHAR[] DEFAULT '{}'",
+            "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS source_setup_id UUID REFERENCES bowl_setups(id)",
+            "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS setups_count INTEGER NOT NULL DEFAULT 0",
             "UPDATE bowl_setups SET views_count = 0 WHERE views_count IS NULL",
             """
             UPDATE bowl_setups
@@ -99,6 +103,16 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS brand VARCHAR",
             "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS package_grams INTEGER",
             "ALTER TABLE tobaccos ADD COLUMN IF NOT EXISTS strength INTEGER",
+            """
+            UPDATE tobaccos
+            SET setups_count = stats.setup_count
+            FROM (
+                SELECT tobacco_id, COUNT(DISTINCT bowl_setup_id)::INTEGER AS setup_count
+                FROM bowl_setup_tobaccos
+                GROUP BY tobacco_id
+            ) stats
+            WHERE tobaccos.id = stats.tobacco_id
+            """,
             "ALTER TABLE coal_placements ADD COLUMN IF NOT EXISTS coal_count INTEGER",
             "ALTER TABLE bowl_setup_reviews ALTER COLUMN rating TYPE DOUBLE PRECISION USING rating::DOUBLE PRECISION",
             """
@@ -193,6 +207,24 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
                 created_at TIMESTAMPTZ DEFAULT now()
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS bowl_setup_comments (
+                id UUID PRIMARY KEY,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                body TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS bowl_setup_likes (
+                id UUID PRIMARY KEY,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_bowl_setup_like_user UNIQUE (bowl_setup_id, user_id)
+            )
+            """,
         ):
             await conn.execute(text(statement))
 
@@ -201,6 +233,8 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_lower_brand ON tobaccos (lower(brand))",
             "CREATE INDEX IF NOT EXISTS ix_coals_lower_name ON coals (lower(name))",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_created_at ON bowl_setups (created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_featured_created ON bowl_setups (is_featured DESC, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_tags_gin ON bowl_setups USING GIN (tags)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_views_count ON bowl_setups (views_count DESC)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_heaviness_score ON bowl_setups (heaviness_score)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_rating_average ON bowl_setups (rating_average DESC)",
@@ -210,6 +244,12 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_user_follows_followed_id ON user_follows (followed_id)",
             "CREATE INDEX IF NOT EXISTS ix_setup_bookmarks_user_id ON setup_bookmarks (user_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_versions_setup_version ON bowl_setup_versions (bowl_setup_id, version DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_comments_setup_created ON bowl_setup_comments (bowl_setup_id, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_comments_creator_id ON bowl_setup_comments (creator_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_likes_setup_id ON bowl_setup_likes (bowl_setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setup_likes_user_id ON bowl_setup_likes (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bowl_setups_source_setup_id ON bowl_setups (source_setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_users_last_seen_at ON users (last_seen_at DESC)",
             "CREATE INDEX IF NOT EXISTS ix_users_badges_gin ON users USING GIN (badges)",
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_deleted_at ON tobaccos (deleted_at)",
             "CREATE INDEX IF NOT EXISTS ix_coals_deleted_at ON coals (deleted_at)",

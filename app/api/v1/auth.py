@@ -1,4 +1,5 @@
 import httpx
+from datetime import datetime
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -85,12 +86,15 @@ async def exchange_google_token(
             nickname=nickname,
             avatar_url=user_info.get("picture"),
             role="admin" if _is_configured_admin(user_info["email"]) else "user",
+            last_seen_at=datetime.utcnow(),
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
     else:
         changed = False
+        user.last_seen_at = datetime.utcnow()
+        changed = True
         if not user.avatar_url and user_info.get("picture"):
             user.avatar_url = user_info.get("picture")
             changed = True

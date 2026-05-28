@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, model_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.config import settings
 from app.schemas.user import UserBadge
 
 
@@ -54,6 +55,7 @@ class TobaccoResponse(TobaccoBase):
     id: UUID4
     creator_id: UUID4
     created_at: datetime
+    setups_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -67,6 +69,7 @@ class TobaccoListItem(BaseModel):
     price_currency: str = Field(default="UAH", pattern="^UAH$")
     package_grams: int | None = Field(default=None, ge=1)
     strength: int | None = Field(default=None, ge=0, le=10)
+    setups_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -189,6 +192,8 @@ class PublicCreatorResponse(BaseModel):
     role: str = "user"
     badges: list[UserBadge] = Field(default_factory=list)
     setups_count: int = 0
+    is_following: bool = False
+    last_seen_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -197,11 +202,41 @@ class BowlSetupBase(BaseModel):
     name: str
     description: str | None = None
     photo_urls: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list, max_length=8)
     bowl_id: UUID4
     kaloud_id: UUID4
     coal_id: UUID4
     coal_placement_id: UUID4
     bowl_setup_type_id: UUID4
+
+    @field_validator("photo_urls")
+    @classmethod
+    def validate_photo_urls(cls, value: list[str]):
+        minio_public_url = (settings.MINIO_PUBLIC_URL or "").rstrip("/")
+        for url in value:
+            if url.startswith("/api/v1/upload/media/"):
+                continue
+            if "/api/v1/upload/media/" in url:
+                continue
+            if minio_public_url and url.startswith(f"{minio_public_url}/"):
+                continue
+            raise ValueError("photo_urls must point to uploaded ShishaGuid media")
+        return value
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]):
+        normalized = []
+        seen = set()
+        for tag in value:
+            clean = " ".join(tag.strip().lower().split())
+            if not clean or clean in seen:
+                continue
+            if len(clean) > 24:
+                raise ValueError("tags must be 24 characters or fewer")
+            seen.add(clean)
+            normalized.append(clean)
+        return normalized[:8]
 
 
 class BowlSetupCreate(BowlSetupBase):
@@ -223,6 +258,8 @@ class BowlSetupResponse(BowlSetupBase):
     creator_id: UUID4
     creator: PublicCreatorResponse | None = None
     created_at: datetime
+    tags: list[str] = Field(default_factory=list)
+    is_featured: bool = False
     views_count: int = 0
     heaviness_score: float | None = None
     average_rating: float = 0
@@ -230,6 +267,10 @@ class BowlSetupResponse(BowlSetupBase):
     version: int = 1
     source_setup_id: UUID4 | None = None
     is_bookmarked: bool = False
+    is_liked: bool = False
+    likes_count: int = 0
+    comments_count: int = 0
+    clones_count: int = 0
     tobaccos: list[BowlSetupTobaccoResponse]
 
     model_config = ConfigDict(from_attributes=True)
@@ -257,6 +298,21 @@ class BowlSetupReviewResponse(BaseModel):
     creator: PublicCreatorResponse | None = None
     rating: float
     description: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BowlSetupCommentCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=500)
+
+
+class BowlSetupCommentResponse(BaseModel):
+    id: UUID4
+    bowl_setup_id: UUID4
+    creator_id: UUID4
+    creator: PublicCreatorResponse | None = None
+    body: str
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,5 +1,6 @@
+import asyncio
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import distinct, func, update
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.storage import promote_file
 from app.core.email import send_email
 from app.crud.base import (
@@ -22,6 +24,8 @@ from app.crud.base import (
 )
 from app.models.shisha import (
     BowlSetup,
+    BowlSetupComment,
+    BowlSetupLike,
     BowlSetupReview,
     BowlSetupTobacco,
     BowlSetupVersion,
@@ -45,6 +49,11 @@ STRENGTH_RANGES = {
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return min(maximum, max(minimum, value))
+
+
+async def _send_email_async(to: str, subject: str, body: str) -> None:
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, send_email, to, subject, body)
 
 
 def get_tobacco_strength(tobacco) -> float:
@@ -119,11 +128,31 @@ def _setup_rating(setup: BowlSetup) -> float:
     return round(sum(ratings) / len(ratings), 1) if ratings else 0
 
 
+def _notification(
+    *,
+    user_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    bowl_setup_id: uuid.UUID | None,
+    notification_type: str,
+    title: str,
+    body: str,
+) -> Notification:
+    return Notification(
+        user_id=user_id,
+        actor_id=actor_id,
+        bowl_setup_id=bowl_setup_id,
+        type=notification_type,
+        title=title,
+        body=body,
+    )
+
+
 def _snapshot_setup(setup: BowlSetup) -> dict:
     return {
         "name": setup.name,
         "description": setup.description,
         "photo_urls": setup.photo_urls or [],
+        "tags": setup.tags or [],
         "bowl_id": str(setup.bowl_id),
         "kaloud_id": str(setup.kaloud_id),
         "coal_id": str(setup.coal_id),
@@ -145,6 +174,7 @@ async def _decorate_setups(
         return setups
 
     creator_ids = {setup.creator_id for setup in setups}
+    setup_ids = [setup.id for setup in setups]
     counts_result = await db.execute(
         select(BowlSetup.creator_id, func.count(BowlSetup.id))
         .where(BowlSetup.creator_id.in_(creator_ids))
@@ -152,20 +182,62 @@ async def _decorate_setups(
     )
     setup_counts = {creator_id: int(count) for creator_id, count in counts_result.all()}
 
+    likes_result = await db.execute(
+        select(BowlSetupLike.bowl_setup_id, func.count(BowlSetupLike.id))
+        .where(BowlSetupLike.bowl_setup_id.in_(setup_ids))
+        .group_by(BowlSetupLike.bowl_setup_id)
+    )
+    likes_counts = {setup_id: int(count) for setup_id, count in likes_result.all()}
+
+    comments_result = await db.execute(
+        select(BowlSetupComment.bowl_setup_id, func.count(BowlSetupComment.id))
+        .where(BowlSetupComment.bowl_setup_id.in_(setup_ids))
+        .group_by(BowlSetupComment.bowl_setup_id)
+    )
+    comments_counts = {setup_id: int(count) for setup_id, count in comments_result.all()}
+
+    clones_result = await db.execute(
+        select(BowlSetup.source_setup_id, func.count(BowlSetup.id))
+        .where(BowlSetup.source_setup_id.in_(setup_ids))
+        .group_by(BowlSetup.source_setup_id)
+    )
+    clones_counts = {setup_id: int(count) for setup_id, count in clones_result.all()}
+
     bookmarked_ids: set[uuid.UUID] = set()
+    liked_ids: set[uuid.UUID] = set()
+    followed_creator_ids: set[uuid.UUID] = set()
     if user_id:
         bookmark_result = await db.execute(
             select(SetupBookmark.bowl_setup_id).where(
                 SetupBookmark.user_id == user_id,
-                SetupBookmark.bowl_setup_id.in_([setup.id for setup in setups]),
+                SetupBookmark.bowl_setup_id.in_(setup_ids),
             )
         )
         bookmarked_ids = set(bookmark_result.scalars().all())
+        like_result = await db.execute(
+            select(BowlSetupLike.bowl_setup_id).where(
+                BowlSetupLike.user_id == user_id,
+                BowlSetupLike.bowl_setup_id.in_(setup_ids),
+            )
+        )
+        liked_ids = set(like_result.scalars().all())
+        follow_result = await db.execute(
+            select(UserFollow.followed_id).where(
+                UserFollow.follower_id == user_id,
+                UserFollow.followed_id.in_(creator_ids),
+            )
+        )
+        followed_creator_ids = set(follow_result.scalars().all())
 
     for setup in setups:
         if setup.creator:
             setattr(setup.creator, "setups_count", setup_counts.get(setup.creator_id, 0))
+            setattr(setup.creator, "is_following", setup.creator_id in followed_creator_ids)
         setattr(setup, "is_bookmarked", setup.id in bookmarked_ids)
+        setattr(setup, "is_liked", setup.id in liked_ids)
+        setattr(setup, "likes_count", likes_counts.get(setup.id, 0))
+        setattr(setup, "comments_count", comments_counts.get(setup.id, 0))
+        setattr(setup, "clones_count", clones_counts.get(setup.id, 0))
     return setups
 
 
@@ -198,6 +270,23 @@ async def _refresh_setup_rating(db: AsyncSession, setup_id: uuid.UUID) -> None:
     setup = await get_setup_by_id(db, setup_id)
     setup.rating_average = round(float(average or 0), 1)
     setup.rating_count = int(count or 0)
+
+
+async def _refresh_tobacco_setup_counts(db: AsyncSession, tobacco_ids: set[uuid.UUID]) -> None:
+    if not tobacco_ids:
+        return
+    counts_result = await db.execute(
+        select(BowlSetupTobacco.tobacco_id, func.count(distinct(BowlSetupTobacco.bowl_setup_id)))
+        .where(BowlSetupTobacco.tobacco_id.in_(tobacco_ids))
+        .group_by(BowlSetupTobacco.tobacco_id)
+    )
+    counts = {tobacco_id: int(count) for tobacco_id, count in counts_result.all()}
+    for tobacco_id in tobacco_ids:
+        await db.execute(
+            update(Tobacco)
+            .where(Tobacco.id == tobacco_id)
+            .values(setups_count=counts.get(tobacco_id, 0))
+        )
 
 
 async def get_filtered_tobaccos(
@@ -300,6 +389,8 @@ async def get_all_setups(
     bookmarked_by: uuid.UUID | None = None,
     followed_by: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    period: str | None = None,
+    tags: list[str] | None = None,
 ):
     page = await get_setups_page(
         db,
@@ -311,6 +402,8 @@ async def get_all_setups(
         bookmarked_by=bookmarked_by,
         followed_by=followed_by,
         user_id=user_id,
+        period=period,
+        tags=tags,
     )
     return page["items"]
 
@@ -327,6 +420,8 @@ async def get_setups_page(
     bookmarked_by: uuid.UUID | None = None,
     followed_by: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
+    period: str | None = None,
+    tags: list[str] | None = None,
 ):
     limit = max(1, min(limit or 50, 50))
     offset = max(0, offset)
@@ -362,6 +457,11 @@ async def get_setups_page(
             UserFollow.follower_id == followed_by
         )
         query = query.where(BowlSetup.creator_id.in_(followed_creator_ids))
+    if period == "week":
+        query = query.where(BowlSetup.created_at >= datetime.utcnow() - timedelta(days=7))
+    selected_tags = [tag.strip().lower() for tag in (tags or []) if tag.strip()]
+    if selected_tags:
+        query = query.where(BowlSetup.tags.contains(selected_tags))
 
     if strength and strength != "all":
         strength_range = STRENGTH_RANGES.get(strength)
@@ -390,7 +490,7 @@ async def get_setups_page(
         elif sort == "name":
             query = query.order_by(func.lower(BowlSetup.name), BowlSetup.created_at.desc())
         else:
-            query = query.order_by(BowlSetup.created_at.desc())
+            query = query.order_by(BowlSetup.is_featured.desc(), BowlSetup.created_at.desc())
 
         result = await db.execute(query.offset(offset).limit(limit))
         items = result.scalars().all()
@@ -545,12 +645,14 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
                 percentage=tob.percentage,
             )
         )
+    await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in schema.tobaccos})
     await db.commit()
     return await get_setup_by_id(db, setup.id)
 
 
 async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
     setup = await get_setup_by_id(db, item_id)
+    old_tobacco_ids = {item.tobacco_id for item in setup.tobaccos}
     db.add(BowlSetupVersion(
         bowl_setup_id=setup.id,
         version=setup.version,
@@ -575,12 +677,17 @@ async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
                 percentage=tob.percentage,
             )
         )
+    await _refresh_tobacco_setup_counts(
+        db,
+        old_tobacco_ids | {item.tobacco_id for item in schema.tobaccos},
+    )
     await db.commit()
     return await get_setup_by_id(db, setup.id)
 
 
 async def update_setup_for_user(db: AsyncSession, item_id: uuid.UUID, schema, user):
     setup = await get_setup_by_id(db, item_id)
+    old_tobacco_ids = {item.tobacco_id for item in setup.tobaccos}
     if setup.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     db.add(BowlSetupVersion(
@@ -607,8 +714,30 @@ async def update_setup_for_user(db: AsyncSession, item_id: uuid.UUID, schema, us
                 percentage=tob.percentage,
             )
         )
+    await _refresh_tobacco_setup_counts(
+        db,
+        old_tobacco_ids | {item.tobacco_id for item in schema.tobaccos},
+    )
     await db.commit()
     return await get_setup_by_id(db, setup.id)
+
+
+async def set_setup_featured(db: AsyncSession, item_id: uuid.UUID, featured: bool):
+    setup = await get_setup_by_id(db, item_id)
+    setup.is_featured = featured
+    await db.commit()
+    return await get_setup_by_id(db, setup.id)
+
+
+async def delete_setup_for_user(db: AsyncSession, item_id: uuid.UUID, user):
+    setup = await get_setup_by_id(db, item_id)
+    if setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    tobacco_ids = {item.tobacco_id for item in setup.tobaccos}
+    await db.delete(setup)
+    await db.flush()
+    await _refresh_tobacco_setup_counts(db, tobacco_ids)
+    await db.commit()
 
 
 async def get_setup_reviews(db: AsyncSession, setup_id: uuid.UUID):
@@ -620,6 +749,59 @@ async def get_setup_reviews(db: AsyncSession, setup_id: uuid.UUID):
         .order_by(BowlSetupReview.created_at.desc())
     )
     return result.scalars().all()
+
+
+async def get_setup_comments(db: AsyncSession, setup_id: uuid.UUID):
+    await get_setup_by_id(db, setup_id)
+    result = await db.execute(
+        select(BowlSetupComment)
+        .options(selectinload(BowlSetupComment.creator))
+        .where(BowlSetupComment.bowl_setup_id == setup_id)
+        .order_by(BowlSetupComment.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+async def create_setup_comment(db: AsyncSession, setup_id: uuid.UUID, schema, user):
+    setup = await get_setup_by_id(db, setup_id)
+    comment = BowlSetupComment(
+        bowl_setup_id=setup_id,
+        creator_id=user.id,
+        body=schema.body.strip(),
+    )
+    db.add(comment)
+    if setup.creator_id != user.id:
+        db.add(_notification(
+            user_id=setup.creator_id,
+            actor_id=user.id,
+            bowl_setup_id=setup.id,
+            notification_type="setup_comment",
+            title="New setup comment",
+            body=f"{user.display_name} (/users/{user.id}) commented on your setup {setup.name}.",
+        ))
+    await db.commit()
+    result = await db.execute(
+        select(BowlSetupComment)
+        .options(selectinload(BowlSetupComment.creator))
+        .where(BowlSetupComment.id == comment.id)
+    )
+    return result.scalars().one()
+
+
+async def delete_setup_comment(db: AsyncSession, setup_id: uuid.UUID, comment_id: uuid.UUID, user):
+    result = await db.execute(
+        select(BowlSetupComment).where(
+            BowlSetupComment.id == comment_id,
+            BowlSetupComment.bowl_setup_id == setup_id,
+        )
+    )
+    comment = result.scalars().first()
+    if not comment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if comment.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    await db.delete(comment)
+    await db.commit()
 
 
 async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, user):
@@ -640,6 +822,17 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
             status_code=status.HTTP_409_CONFLICT,
             detail="You already reviewed this setup",
         )
+    daily_count = await db.scalar(
+        select(func.count(BowlSetupReview.id)).where(
+            BowlSetupReview.creator_id == user.id,
+            BowlSetupReview.created_at >= datetime.utcnow() - timedelta(days=1),
+        )
+    )
+    if int(daily_count or 0) >= settings.REVIEW_RATE_LIMIT_PER_DAY:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily review limit reached",
+        )
 
     review = BowlSetupReview(
         bowl_setup_id=setup_id,
@@ -654,15 +847,15 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
             bowl_setup_id=setup.id,
             type="setup_review",
             title="New setup review",
-            body=f"{user.display_name} reviewed your setup {setup.name}.",
+            body=f"{user.display_name} (/users/{user.id}) reviewed your setup {setup.name}.",
         )
         db.add(notification)
         owner = await db.get(User, setup.creator_id)
         if owner:
-            send_email(
+            await _send_email_async(
                 owner.email,
                 "New review on your ShishaGuid setup",
-                f"{user.display_name} reviewed your setup \"{setup.name}\".",
+                f"{user.display_name} (/users/{user.id}) reviewed your setup \"{setup.name}\".",
             )
     await db.flush()
     await _refresh_setup_rating(db, setup_id)
@@ -710,12 +903,22 @@ async def clone_setup(db: AsyncSession, setup_id: uuid.UUID, user):
             tobacco_id=item.tobacco_id,
             percentage=item.percentage,
         ))
+    await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in setup.tobaccos})
+    if setup.creator_id != user.id:
+        db.add(_notification(
+            user_id=setup.creator_id,
+            actor_id=user.id,
+            bowl_setup_id=setup.id,
+            notification_type="setup_cloned",
+            title="Setup cloned",
+            body=f"{user.display_name} (/users/{user.id}) cloned your setup {setup.name}.",
+        ))
     await db.commit()
     return await get_setup_by_id(db, clone.id, user.id)
 
 
 async def set_setup_bookmark(db: AsyncSession, setup_id: uuid.UUID, user, enabled: bool):
-    await get_setup_by_id(db, setup_id)
+    setup = await get_setup_by_id(db, setup_id)
     result = await db.execute(
         select(SetupBookmark).where(
             SetupBookmark.user_id == user.id,
@@ -725,8 +928,34 @@ async def set_setup_bookmark(db: AsyncSession, setup_id: uuid.UUID, user, enable
     bookmark = result.scalars().first()
     if enabled and not bookmark:
         db.add(SetupBookmark(user_id=user.id, bowl_setup_id=setup_id))
+        if setup.creator_id != user.id:
+            db.add(_notification(
+                user_id=setup.creator_id,
+                actor_id=user.id,
+                bowl_setup_id=setup.id,
+                notification_type="setup_bookmarked",
+                title="Setup bookmarked",
+                body=f"{user.display_name} (/users/{user.id}) bookmarked your setup {setup.name}.",
+            ))
     if not enabled and bookmark:
         await db.delete(bookmark)
+    await db.commit()
+    return await get_setup_by_id(db, setup_id, user.id)
+
+
+async def set_setup_like(db: AsyncSession, setup_id: uuid.UUID, user, enabled: bool):
+    await get_setup_by_id(db, setup_id)
+    result = await db.execute(
+        select(BowlSetupLike).where(
+            BowlSetupLike.user_id == user.id,
+            BowlSetupLike.bowl_setup_id == setup_id,
+        )
+    )
+    like = result.scalars().first()
+    if enabled and not like:
+        db.add(BowlSetupLike(user_id=user.id, bowl_setup_id=setup_id))
+    if not enabled and like:
+        await db.delete(like)
     await db.commit()
     return await get_setup_by_id(db, setup_id, user.id)
 

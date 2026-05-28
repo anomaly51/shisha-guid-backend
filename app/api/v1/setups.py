@@ -15,6 +15,8 @@ from app.models.shisha import BowlSetup, BowlSetupType, CoalPlacement
 from app.models.user import User
 from app.schemas.shisha import (
     BowlSetupCreate,
+    BowlSetupCommentCreate,
+    BowlSetupCommentResponse,
     BowlSetupPageResponse,
     BowlSetupReviewCreate,
     BowlSetupReviewResponse,
@@ -124,6 +126,7 @@ async def delete_bowl_setup_type(
 @router.get("/bowl-setups", response_model=list[BowlSetupResponse] | BowlSetupPageResponse)
 async def get_bowl_setups(
     tobacco_ids: list[uuid.UUID] = Query(default_factory=list),
+    tags: list[str] = Query(default_factory=list),
     search: str | None = Query(default=None, min_length=1),
     creator_id: uuid.UUID | None = Query(default=None),
     bookmarked: bool = Query(default=False),
@@ -137,6 +140,7 @@ async def get_bowl_setups(
         "strengthAsc",
         "name",
     ] = "newest",
+    period: Literal["all", "week"] = "all",
     limit: int | None = Query(default=None, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -159,6 +163,8 @@ async def get_bowl_setups(
             bookmarked_by=bookmarked_by,
             followed_by=followed_by,
             user_id=user.id if user else None,
+            period=period,
+            tags=tags,
         )
     return await crud.get_all_setups(
         db,
@@ -170,6 +176,8 @@ async def get_bowl_setups(
         bookmarked_by=bookmarked_by,
         followed_by=followed_by,
         user_id=user.id if user else None,
+        period=period,
+        tags=tags,
     )
 
 
@@ -231,13 +239,23 @@ async def update_bowl_setup(
     return await crud.update_setup_for_user(db, item_id, item, user)
 
 
+@router.patch("/bowl-setups/{item_id}/featured", response_model=BowlSetupResponse)
+async def feature_bowl_setup(
+    item_id: uuid.UUID,
+    featured: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_admin_user),
+):
+    return await crud.set_setup_featured(db, item_id, featured)
+
+
 @router.delete("/bowl-setups/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    await crud.delete_item_for_user(db, BowlSetup, item_id, user)
+    await crud.delete_setup_for_user(db, item_id, user)
 
 
 @router.get(
@@ -329,3 +347,59 @@ async def unbookmark_bowl_setup(
     user: User = Depends(get_current_user),
 ):
     return await crud.set_setup_bookmark(db, item_id, user, False)
+
+
+@router.post("/bowl-setups/{item_id}/like", response_model=BowlSetupResponse)
+async def like_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.set_setup_like(db, item_id, user, True)
+
+
+@router.delete("/bowl-setups/{item_id}/like", response_model=BowlSetupResponse)
+async def unlike_bowl_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.set_setup_like(db, item_id, user, False)
+
+
+@router.get(
+    "/bowl-setups/{item_id}/comments",
+    response_model=list[BowlSetupCommentResponse],
+)
+async def get_bowl_setup_comments(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_setup_comments(db, item_id)
+
+
+@router.post(
+    "/bowl-setups/{item_id}/comments",
+    response_model=BowlSetupCommentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_bowl_setup_comment(
+    item_id: uuid.UUID,
+    item: BowlSetupCommentCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.create_setup_comment(db, item_id, item, user)
+
+
+@router.delete(
+    "/bowl-setups/{item_id}/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_bowl_setup_comment(
+    item_id: uuid.UUID,
+    comment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await crud.delete_setup_comment(db, item_id, comment_id, user)

@@ -1,3 +1,6 @@
+import hashlib
+from email.utils import formatdate
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -48,6 +51,17 @@ async def add_public_cache_headers(request: Request, call_next):
             "Cache-Control",
             "public, max-age=60, stale-while-revalidate=300",
         )
+        if path.startswith((
+            "/api/v1/shisha/tobaccos",
+            "/api/v1/shisha/bowls",
+            "/api/v1/shisha/coals",
+            "/api/v1/shisha/kalouds",
+            "/api/v1/shisha/coal-placements",
+            "/api/v1/shisha/bowl-setup-types",
+        )):
+            etag_source = f"{path}?{request.url.query}"
+            response.headers.setdefault("ETag", f'W/"{hashlib.sha1(etag_source.encode()).hexdigest()[:16]}"')
+            response.headers.setdefault("Last-Modified", response.headers.get("date") or formatdate(usegmt=True))
     return response
 
 @app.on_event("startup")
