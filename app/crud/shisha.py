@@ -25,18 +25,28 @@ from app.crud.base import (
 from app.models.shisha import (
     BowlSetup,
     BowlSetupComment,
+    BowlSetupContributor,
     BowlSetupLike,
     BowlSetupReview,
     BowlSetupTobacco,
     BowlSetupVersion,
     BowlSetupView,
     Coal,
+    Report,
+    ReviewReply,
     Tobacco,
 )
 from app.models.user import Notification, SetupBookmark, User, UserFollow
 
 
 VIEW_INTERVAL = timedelta(minutes=30)
+
+AUTO_BADGES = {
+    "first_setup": {"label": "Первая забивка", "color": "#16A34A", "effect": "shimmer"},
+    "ten_setups": {"label": "10 забивок", "color": "#2563EB", "effect": "electric"},
+    "first_review": {"label": "Первый отзыв", "color": "#9333EA", "effect": "cosmic"},
+    "hundred_views": {"label": "100 просмотров", "color": "#DC2626", "effect": "fire"},
+}
 
 
 STRENGTH_RANGES = {
@@ -163,6 +173,30 @@ def _snapshot_setup(setup: BowlSetup) -> dict:
             for item in setup.tobaccos or []
         ],
     }
+
+
+def _award_badge(user: User, key: str) -> None:
+    badge = AUTO_BADGES[key]
+    badges = list(user.badges or [])
+    if any(item.get("label") == badge["label"] for item in badges):
+        return
+    user.badges = [*badges, badge]
+
+
+def _touch_user_activity(user: User, *, score_delta: int = 0, publish_activity: bool = False) -> None:
+    now = datetime.utcnow()
+    if publish_activity:
+        last_active = user.last_active_at
+        if last_active is None:
+            user.streak_days = 1
+        elif last_active.date() == now.date():
+            user.streak_days = max(user.streak_days or 1, 1)
+        elif last_active.date() == (now - timedelta(days=1)).date():
+            user.streak_days = (user.streak_days or 0) + 1
+        else:
+            user.streak_days = 1
+        user.last_active_at = now
+    user.score = max(0, int(user.score or 0) + score_delta)
 
 
 async def _decorate_setups(
@@ -430,6 +464,7 @@ async def get_setups_page(
     query = select(BowlSetup).options(
         selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
         selectinload(BowlSetup.creator),
+        selectinload(BowlSetup.contributors).selectinload(BowlSetupContributor.user),
     )
 
     if selected_tobacco_ids:
@@ -549,6 +584,7 @@ async def get_setup_by_id(
         .options(
             selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
             selectinload(BowlSetup.creator),
+            selectinload(BowlSetup.contributors).selectinload(BowlSetupContributor.user),
         )
         .where(BowlSetup.id == item_id)
     )
@@ -624,11 +660,16 @@ async def record_setup_view(
         .where(BowlSetup.id == setup.id)
         .values(views_count=BowlSetup.views_count + 1)
     )
+    owner = await db.get(User, setup.creator_id)
+    if owner and int(setup.views_count or 0) + 1 >= 100:
+        _award_badge(owner, "hundred_views")
+        db.add(owner)
     await db.commit()
     return await get_setup_by_id(db, setup.id)
 
 
 async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
+    user = await db.get(User, user_id)
     data = schema.model_dump(exclude={"tobaccos"})
     data["photo_urls"] = [
         promote_file(url, "bowl_setups", str(user_id)) for url in data.get("photo_urls", [])
@@ -646,6 +687,16 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
             )
         )
     await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in schema.tobaccos})
+    if user:
+        setups_count = await db.scalar(
+            select(func.count(BowlSetup.id)).where(BowlSetup.creator_id == user_id)
+        )
+        _touch_user_activity(user, score_delta=10, publish_activity=True)
+        if int(setups_count or 0) >= 1:
+            _award_badge(user, "first_setup")
+        if int(setups_count or 0) >= 10:
+            _award_badge(user, "ten_setups")
+        db.add(user)
     await db.commit()
     return await get_setup_by_id(db, setup.id)
 
@@ -688,7 +739,13 @@ async def update_setup(db: AsyncSession, item_id: uuid.UUID, schema):
 async def update_setup_for_user(db: AsyncSession, item_id: uuid.UUID, schema, user):
     setup = await get_setup_by_id(db, item_id)
     old_tobacco_ids = {item.tobacco_id for item in setup.tobaccos}
-    if setup.creator_id != user.id and user.role != "admin":
+    is_contributor = bool(await db.scalar(
+        select(BowlSetupContributor.id).where(
+            BowlSetupContributor.bowl_setup_id == item_id,
+            BowlSetupContributor.user_id == user.id,
+        )
+    ))
+    if setup.creator_id != user.id and user.role != "admin" and not is_contributor:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     db.add(BowlSetupVersion(
         bowl_setup_id=setup.id,
@@ -729,6 +786,54 @@ async def set_setup_featured(db: AsyncSession, item_id: uuid.UUID, featured: boo
     return await get_setup_by_id(db, setup.id)
 
 
+async def add_setup_contributor(db: AsyncSession, setup_id: uuid.UUID, nickname: str, user):
+    setup = await get_setup_by_id(db, setup_id)
+    if setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    normalized = nickname.strip()
+    contributor_user = await db.scalar(
+        select(User).where(func.lower(User.nickname) == normalized.lower())
+    )
+    if not contributor_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if contributor_user.id == setup.creator_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Creator is already the author")
+    existing = await db.scalar(
+        select(BowlSetupContributor.id).where(
+            BowlSetupContributor.bowl_setup_id == setup_id,
+            BowlSetupContributor.user_id == contributor_user.id,
+        )
+    )
+    if not existing:
+        db.add(BowlSetupContributor(bowl_setup_id=setup_id, user_id=contributor_user.id))
+        db.add(_notification(
+            user_id=contributor_user.id,
+            actor_id=user.id,
+            bowl_setup_id=setup.id,
+            notification_type="setup_contributor_added",
+            title="Added as contributor",
+            body=f"{user.display_name} added you as a contributor to {setup.name}.",
+        ))
+        await db.commit()
+    return await get_setup_by_id(db, setup_id, user.id)
+
+
+async def remove_setup_contributor(db: AsyncSession, setup_id: uuid.UUID, contributor_id: uuid.UUID, user):
+    setup = await get_setup_by_id(db, setup_id)
+    if setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    contributor = await db.scalar(
+        select(BowlSetupContributor).where(
+            BowlSetupContributor.bowl_setup_id == setup_id,
+            BowlSetupContributor.user_id == contributor_id,
+        )
+    )
+    if contributor:
+        await db.delete(contributor)
+        await db.commit()
+    return await get_setup_by_id(db, setup_id, user.id)
+
+
 async def delete_setup_for_user(db: AsyncSession, item_id: uuid.UUID, user):
     setup = await get_setup_by_id(db, item_id)
     if setup.creator_id != user.id and user.role != "admin":
@@ -748,7 +853,83 @@ async def get_setup_reviews(db: AsyncSession, setup_id: uuid.UUID):
         .where(BowlSetupReview.bowl_setup_id == setup_id)
         .order_by(BowlSetupReview.created_at.desc())
     )
+    reviews = result.scalars().all()
+    if reviews:
+        counts_result = await db.execute(
+            select(ReviewReply.review_id, func.count(ReviewReply.id))
+            .where(ReviewReply.review_id.in_([review.id for review in reviews]))
+            .group_by(ReviewReply.review_id)
+        )
+        counts = {review_id: int(count) for review_id, count in counts_result.all()}
+        for review in reviews:
+            setattr(review, "replies_count", counts.get(review.id, 0))
+    return reviews
+
+
+async def get_review_replies(db: AsyncSession, setup_id: uuid.UUID, review_id: uuid.UUID):
+    await get_setup_by_id(db, setup_id)
+    result = await db.execute(
+        select(ReviewReply)
+        .options(selectinload(ReviewReply.creator))
+        .join(BowlSetupReview, BowlSetupReview.id == ReviewReply.review_id)
+        .where(
+            BowlSetupReview.id == review_id,
+            BowlSetupReview.bowl_setup_id == setup_id,
+        )
+        .order_by(ReviewReply.created_at.asc())
+    )
     return result.scalars().all()
+
+
+async def create_review_reply(db: AsyncSession, setup_id: uuid.UUID, review_id: uuid.UUID, schema, user):
+    setup = await get_setup_by_id(db, setup_id)
+    review = await db.scalar(
+        select(BowlSetupReview).where(
+            BowlSetupReview.id == review_id,
+            BowlSetupReview.bowl_setup_id == setup_id,
+        )
+    )
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    reply = ReviewReply(review_id=review_id, creator_id=user.id, body=schema.body.strip())
+    db.add(reply)
+    if review.creator_id != user.id:
+        db.add(_notification(
+            user_id=review.creator_id,
+            actor_id=user.id,
+            bowl_setup_id=setup.id,
+            notification_type="review_reply",
+            title="Review reply",
+            body=f"{user.display_name} replied to your review on {setup.name}.",
+        ))
+    await db.commit()
+    result = await db.execute(
+        select(ReviewReply)
+        .options(selectinload(ReviewReply.creator))
+        .where(ReviewReply.id == reply.id)
+    )
+    return result.scalars().one()
+
+
+async def delete_review_reply(db: AsyncSession, setup_id: uuid.UUID, review_id: uuid.UUID, reply_id: uuid.UUID, user):
+    setup = await get_setup_by_id(db, setup_id)
+    reply = await db.scalar(
+        select(ReviewReply)
+        .join(BowlSetupReview, BowlSetupReview.id == ReviewReply.review_id)
+        .where(
+            ReviewReply.id == reply_id,
+            ReviewReply.review_id == review_id,
+            BowlSetupReview.bowl_setup_id == setup_id,
+        )
+    )
+    if not reply:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if reply.creator_id != user.id and setup.creator_id != user.id and user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    await db.delete(reply)
+    await db.commit()
 
 
 async def get_setup_comments(db: AsyncSession, setup_id: uuid.UUID):
@@ -840,6 +1021,13 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
         **schema.model_dump(),
     )
     db.add(review)
+    _touch_user_activity(user, score_delta=2, publish_activity=True)
+    review_count = await db.scalar(
+        select(func.count(BowlSetupReview.id)).where(BowlSetupReview.creator_id == user.id)
+    )
+    if int(review_count or 0) == 0:
+        _award_badge(user, "first_review")
+    db.add(user)
     if setup.creator_id != user.id:
         notification = Notification(
             user_id=setup.creator_id,
@@ -944,7 +1132,7 @@ async def set_setup_bookmark(db: AsyncSession, setup_id: uuid.UUID, user, enable
 
 
 async def set_setup_like(db: AsyncSession, setup_id: uuid.UUID, user, enabled: bool):
-    await get_setup_by_id(db, setup_id)
+    setup = await get_setup_by_id(db, setup_id)
     result = await db.execute(
         select(BowlSetupLike).where(
             BowlSetupLike.user_id == user.id,
@@ -954,6 +1142,11 @@ async def set_setup_like(db: AsyncSession, setup_id: uuid.UUID, user, enabled: b
     like = result.scalars().first()
     if enabled and not like:
         db.add(BowlSetupLike(user_id=user.id, bowl_setup_id=setup_id))
+        if setup.creator_id != user.id:
+            owner = await db.get(User, setup.creator_id)
+            if owner:
+                _touch_user_activity(owner, score_delta=1)
+                db.add(owner)
     if not enabled and like:
         await db.delete(like)
     await db.commit()
@@ -1021,3 +1214,26 @@ async def delete_setup_review(
     await db.flush()
     await _refresh_setup_rating(db, setup_id)
     await db.commit()
+
+
+async def create_report(db: AsyncSession, schema, user):
+    if schema.target_type == "setup":
+        await get_setup_by_id(db, schema.target_id)
+    elif schema.target_type == "review":
+        review = await db.get(BowlSetupReview, schema.target_id)
+        if not review:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    report = Report(
+        target_type=schema.target_type,
+        target_id=schema.target_id,
+        reporter_id=user.id,
+        reason=schema.reason.strip(),
+    )
+    db.add(report)
+    await db.commit()
+    result = await db.execute(
+        select(Report)
+        .options(selectinload(Report.reporter))
+        .where(Report.id == report.id)
+    )
+    return result.scalars().one()

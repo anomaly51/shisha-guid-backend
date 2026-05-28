@@ -2,6 +2,7 @@ from .shisha import (
     Bowl,
     BowlSetup,
     BowlSetupComment,
+    BowlSetupContributor,
     BowlSetupLike,
     BowlSetupReview,
     BowlSetupTobacco,
@@ -11,14 +12,25 @@ from .shisha import (
     Coal,
     CoalPlacement,
     Kaloud,
+    Report,
+    ReviewReply,
     Tobacco,
 )
-from .user import Notification, SetupBookmark, User, UserFollow
+from .user import (
+    Notification,
+    SetupBookmark,
+    SetupCollection,
+    SetupCollectionItem,
+    User,
+    UserFavoriteTobacco,
+    UserFollow,
+)
 
 __all__ = [
     "Bowl",
     "BowlSetup",
     "BowlSetupComment",
+    "BowlSetupContributor",
     "BowlSetupLike",
     "BowlSetupReview",
     "BowlSetupTobacco",
@@ -28,9 +40,14 @@ __all__ = [
     "Coal",
     "CoalPlacement",
     "Kaloud",
+    "Report",
+    "ReviewReply",
     "Tobacco",
     "Notification",
     "SetupBookmark",
+    "SetupCollection",
+    "SetupCollectionItem",
     "User",
+    "UserFavoriteTobacco",
     "UserFollow",
 ]

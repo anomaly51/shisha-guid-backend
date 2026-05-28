@@ -193,6 +193,9 @@ class BowlSetup(Base):
     versions: Mapped[list["BowlSetupVersion"]] = relationship(
         back_populates="bowl_setup", cascade="all, delete-orphan"
     )
+    contributors: Mapped[list["BowlSetupContributor"]] = relationship(
+        back_populates="bowl_setup", cascade="all, delete-orphan"
+    )
 
     @property
     def average_rating(self) -> float:
@@ -200,6 +203,10 @@ class BowlSetup(Base):
             return round(float(self.rating_average), 1)
         ratings = [review.rating for review in self.reviews or []]
         return round(sum(ratings) / len(ratings), 1) if ratings else 0
+
+    @property
+    def contributor_users(self):
+        return [contributor.user for contributor in self.contributors or [] if contributor.user]
 
 
 class BowlSetupView(Base):
@@ -283,6 +290,25 @@ class BowlSetupReview(Base):
     creator: Mapped["User"] = relationship("User")
 
 
+class ReviewReply(Base):
+    __tablename__ = "review_replies"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    review_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setup_reviews.id", ondelete="CASCADE"), nullable=False
+    )
+    creator_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    review: Mapped["BowlSetupReview"] = relationship("BowlSetupReview")
+    creator: Mapped["User"] = relationship("User")
+
+
 class BowlSetupComment(Base):
     __tablename__ = "bowl_setup_comments"
 
@@ -325,3 +351,43 @@ class BowlSetupLike(Base):
 
     bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="likes")
     user: Mapped["User"] = relationship("User")
+
+
+class BowlSetupContributor(Base):
+    __tablename__ = "bowl_setup_contributors"
+    __table_args__ = (
+        UniqueConstraint("bowl_setup_id", "user_id", name="uq_setup_contributor_user"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    bowl_setup_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("bowl_setups.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    bowl_setup: Mapped["BowlSetup"] = relationship(back_populates="contributors")
+    user: Mapped["User"] = relationship("User")
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    reporter_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    reporter: Mapped["User"] = relationship("User")

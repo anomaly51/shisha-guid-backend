@@ -50,6 +50,9 @@ class UserProfileResponse(BaseModel):
     is_banned: bool = False
     badges: list[UserBadge] = Field(default_factory=list)
     last_seen_at: datetime | None = None
+    last_active_at: datetime | None = None
+    streak_days: int = 0
+    score: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -88,6 +91,9 @@ class PublicUserResponse(BaseModel):
     is_following: bool = False
     is_followed_by: bool = False
     last_seen_at: datetime | None = None
+    last_active_at: datetime | None = None
+    streak_days: int = 0
+    score: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,3 +122,26 @@ class NotificationResponse(BaseModel):
 class NotificationPageResponse(BaseModel):
     items: list[NotificationResponse]
     unread_count: int
+
+
+class SetupCollectionCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str):
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Collection name is required")
+        return normalized
+
+
+class SetupCollectionResponse(BaseModel):
+    id: UUID4
+    user_id: UUID4
+    name: str
+    created_at: datetime
+    setup_ids: list[UUID4] = Field(default_factory=list)
+    items_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)

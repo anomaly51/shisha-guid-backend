@@ -2,10 +2,12 @@ import uuid
 import re
 import html
 import hashlib
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.security import get_current_admin_user
@@ -17,8 +19,10 @@ from app.models.shisha import (
     Coal,
     CoalPlacement,
     Kaloud,
+    Report,
     Tobacco,
 )
+from app.schemas.shisha import ReportResponse
 from app.models.user import User
 from app.schemas.user import AdminUserResponse, AdminUserUpdate
 
@@ -47,6 +51,7 @@ CONTENT_MODELS = {
     "bowl-setup-types": BowlSetupType,
     "bowl-setups": BowlSetup,
 }
+REPORT_STATUSES = {"pending", "resolved", "dismissed"}
 
 
 async def _count(db: AsyncSession, model):
@@ -219,3 +224,40 @@ async def delete_content(
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await crud.delete_item(db, model, item_id)
+
+
+@router.get("/reports", response_model=list[ReportResponse])
+async def list_reports(
+    status_filter: str = "pending",
+    db: AsyncSession = Depends(get_db),
+):
+    if status_filter not in REPORT_STATUSES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    result = await db.execute(
+        select(Report)
+        .options(selectinload(Report.reporter))
+        .where(Report.status == status_filter)
+        .order_by(Report.created_at.desc())
+        .limit(100)
+    )
+    return result.scalars().all()
+
+
+@router.patch("/reports/{report_id}", response_model=ReportResponse)
+async def update_report(
+    report_id: uuid.UUID,
+    status_value: str = "resolved",
+    db: AsyncSession = Depends(get_db),
+):
+    if status_value not in (REPORT_STATUSES - {"pending"}):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+    report = await db.get(Report, report_id)
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    report.status = status_value
+    report.resolved_at = datetime.utcnow()
+    await db.commit()
+    result = await db.execute(
+        select(Report).options(selectinload(Report.reporter)).where(Report.id == report.id)
+    )
+    return result.scalars().one()

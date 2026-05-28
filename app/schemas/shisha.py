@@ -56,6 +56,7 @@ class TobaccoResponse(TobaccoBase):
     creator_id: UUID4
     created_at: datetime
     setups_count: int = 0
+    is_favorite: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -70,6 +71,7 @@ class TobaccoListItem(BaseModel):
     package_grams: int | None = Field(default=None, ge=1)
     strength: int | None = Field(default=None, ge=0, le=10)
     setups_count: int = 0
+    is_favorite: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -271,6 +273,7 @@ class BowlSetupResponse(BowlSetupBase):
     likes_count: int = 0
     comments_count: int = 0
     clones_count: int = 0
+    contributors: list[PublicCreatorResponse] = Field(default_factory=list, validation_alias="contributor_users")
     tobaccos: list[BowlSetupTobaccoResponse]
 
     model_config = ConfigDict(from_attributes=True)
@@ -299,6 +302,22 @@ class BowlSetupReviewResponse(BaseModel):
     rating: float
     description: str
     created_at: datetime
+    replies_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewReplyCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=1000)
+
+
+class ReviewReplyResponse(BaseModel):
+    id: UUID4
+    review_id: UUID4
+    creator_id: UUID4
+    creator: PublicCreatorResponse | None = None
+    body: str
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -324,5 +343,29 @@ class BowlSetupVersionResponse(BaseModel):
     version: int
     snapshot: dict
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ContributorCreate(BaseModel):
+    nickname: str = Field(..., min_length=1, max_length=80)
+
+
+class ReportCreate(BaseModel):
+    target_type: str = Field(..., pattern="^(setup|review)$")
+    target_id: UUID4
+    reason: str = Field(..., min_length=3, max_length=1000)
+
+
+class ReportResponse(BaseModel):
+    id: UUID4
+    target_type: str
+    target_id: UUID4
+    reporter_id: UUID4
+    reporter: PublicCreatorResponse | None = None
+    reason: str
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

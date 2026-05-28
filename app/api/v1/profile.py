@@ -1,20 +1,32 @@
 import uuid
+import asyncio
+import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import get_current_user, get_optional_current_user
+from app.core.security import _get_user_from_token, get_current_user, get_optional_current_user
 from app.crud import shisha as crud
 from app.core.storage import promote_file
-from app.models.shisha import BowlSetup, BowlSetupReview
-from app.models.user import Notification, User, UserFollow
-from app.schemas.shisha import BowlSetupPageResponse
+from app.models.shisha import BowlSetup, BowlSetupReview, BowlSetupTobacco, Tobacco
+from app.models.user import (
+    Notification,
+    SetupCollection,
+    SetupCollectionItem,
+    User,
+    UserFavoriteTobacco,
+    UserFollow,
+)
+from app.schemas.shisha import BowlSetupPageResponse, TobaccoResponse
 from app.schemas.user import (
     NotificationPageResponse,
     PublicUserResponse,
+    SetupCollectionCreate,
+    SetupCollectionResponse,
     UserProfileResponse,
     UserProfileUpdate,
     UserActivityResponse,
@@ -65,6 +77,9 @@ async def _public_user_payload(
         "following_count": int(following_count or 0),
         "is_following": is_following,
         "is_followed_by": is_followed_by,
+        "last_active_at": user.last_active_at,
+        "streak_days": user.streak_days,
+        "score": user.score,
     }
 
 
@@ -195,6 +210,38 @@ async def get_top_authors(
     ]
 
 
+@router.get("/recommended-users", response_model=list[PublicUserResponse])
+async def get_recommended_users(
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    safe_limit = max(1, min(limit, 30))
+    user_tobacco_ids = (
+        select(BowlSetupTobacco.tobacco_id)
+        .join(BowlSetup, BowlSetup.id == BowlSetupTobacco.bowl_setup_id)
+        .where(BowlSetup.creator_id == current_user.id)
+        .union(select(UserFavoriteTobacco.tobacco_id).where(UserFavoriteTobacco.user_id == current_user.id))
+    )
+    result = await db.execute(
+        select(User, func.count(func.distinct(BowlSetupTobacco.tobacco_id)).label("matches"))
+        .join(BowlSetup, BowlSetup.creator_id == User.id)
+        .join(BowlSetupTobacco, BowlSetupTobacco.bowl_setup_id == BowlSetup.id)
+        .where(
+            User.id != current_user.id,
+            User.is_banned.is_(False),
+            BowlSetupTobacco.tobacco_id.in_(user_tobacco_ids),
+        )
+        .group_by(User.id)
+        .order_by(func.count(func.distinct(BowlSetupTobacco.tobacco_id)).desc(), User.score.desc())
+        .limit(safe_limit)
+    )
+    users = [user for user, _matches in result.all()]
+    if not users:
+        return await get_top_authors(safe_limit, db, current_user)
+    return [await _public_user_payload(db, user, current_user) for user in users]
+
+
 @router.get("/users/{user_id}", response_model=PublicUserResponse)
 async def read_public_user(
     user_id: uuid.UUID,
@@ -205,6 +252,42 @@ async def read_public_user(
     if not user or user.is_banned:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return await _public_user_payload(db, user, viewer)
+
+
+@router.get("/users/{user_id}/followers", response_model=list[PublicUserResponse])
+async def read_public_user_followers(
+    user_id: uuid.UUID,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_current_user),
+):
+    safe_limit = max(1, min(limit, 100))
+    result = await db.execute(
+        select(User)
+        .join(UserFollow, UserFollow.follower_id == User.id)
+        .where(UserFollow.followed_id == user_id, User.is_banned.is_(False))
+        .order_by(UserFollow.created_at.desc())
+        .limit(safe_limit)
+    )
+    return [await _public_user_payload(db, user, viewer) for user in result.scalars().all()]
+
+
+@router.get("/users/{user_id}/following", response_model=list[PublicUserResponse])
+async def read_public_user_following(
+    user_id: uuid.UUID,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    viewer: User | None = Depends(get_optional_current_user),
+):
+    safe_limit = max(1, min(limit, 100))
+    result = await db.execute(
+        select(User)
+        .join(UserFollow, UserFollow.followed_id == User.id)
+        .where(UserFollow.follower_id == user_id, User.is_banned.is_(False))
+        .order_by(UserFollow.created_at.desc())
+        .limit(safe_limit)
+    )
+    return [await _public_user_payload(db, user, viewer) for user in result.scalars().all()]
 
 
 @router.get("/users/{user_id}/setups", response_model=BowlSetupPageResponse)
@@ -314,3 +397,183 @@ async def mark_notifications_read(
         item.read_at = datetime.utcnow()
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/notifications/stream")
+async def stream_notifications(
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    current_user = await _get_user_from_token(token, db)
+
+    async def events():
+        last_id: uuid.UUID | None = None
+        while True:
+            result = await db.execute(
+                select(Notification)
+                .where(Notification.user_id == current_user.id)
+                .order_by(Notification.created_at.desc())
+                .limit(1)
+            )
+            notification = result.scalars().first()
+            if notification and notification.id != last_id:
+                last_id = notification.id
+                payload = {
+                    "id": str(notification.id),
+                    "type": notification.type,
+                    "title": notification.title,
+                    "body": notification.body,
+                    "actor_id": str(notification.actor_id) if notification.actor_id else None,
+                    "bowl_setup_id": str(notification.bowl_setup_id) if notification.bowl_setup_id else None,
+                    "created_at": notification.created_at.isoformat() if notification.created_at else None,
+                }
+                yield f"event: notification\ndata: {json.dumps(payload)}\n\n"
+            else:
+                yield "event: ping\ndata: {}\n\n"
+            await asyncio.sleep(15)
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+async def _collection_payload(db: AsyncSession, collection: SetupCollection) -> dict:
+    result = await db.execute(
+        select(SetupCollectionItem.bowl_setup_id).where(
+            SetupCollectionItem.collection_id == collection.id
+        )
+    )
+    setup_ids = list(result.scalars().all())
+    return {
+        "id": collection.id,
+        "user_id": collection.user_id,
+        "name": collection.name,
+        "created_at": collection.created_at,
+        "setup_ids": setup_ids,
+        "items_count": len(setup_ids),
+    }
+
+
+@router.get("/collections", response_model=list[SetupCollectionResponse])
+async def list_collections(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(SetupCollection)
+        .where(SetupCollection.user_id == current_user.id)
+        .order_by(SetupCollection.created_at.desc())
+    )
+    return [await _collection_payload(db, collection) for collection in result.scalars().all()]
+
+
+@router.post("/collections", response_model=SetupCollectionResponse, status_code=status.HTTP_201_CREATED)
+async def create_collection(
+    item: SetupCollectionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    collection = SetupCollection(user_id=current_user.id, name=item.name)
+    db.add(collection)
+    await db.commit()
+    await db.refresh(collection)
+    return await _collection_payload(db, collection)
+
+
+@router.post("/collections/{collection_id}/setups/{setup_id}", response_model=SetupCollectionResponse)
+async def add_setup_to_collection(
+    collection_id: uuid.UUID,
+    setup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    collection = await db.get(SetupCollection, collection_id)
+    if not collection or collection.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await crud.get_setup_by_id(db, setup_id)
+    existing = await db.scalar(
+        select(SetupCollectionItem.id).where(
+            SetupCollectionItem.collection_id == collection_id,
+            SetupCollectionItem.bowl_setup_id == setup_id,
+        )
+    )
+    if not existing:
+        db.add(SetupCollectionItem(collection_id=collection_id, bowl_setup_id=setup_id))
+        await db.commit()
+    return await _collection_payload(db, collection)
+
+
+@router.delete("/collections/{collection_id}/setups/{setup_id}", response_model=SetupCollectionResponse)
+async def remove_setup_from_collection(
+    collection_id: uuid.UUID,
+    setup_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    collection = await db.get(SetupCollection, collection_id)
+    if not collection or collection.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    item = await db.scalar(
+        select(SetupCollectionItem).where(
+            SetupCollectionItem.collection_id == collection_id,
+            SetupCollectionItem.bowl_setup_id == setup_id,
+        )
+    )
+    if item:
+        await db.delete(item)
+        await db.commit()
+    return await _collection_payload(db, collection)
+
+
+@router.get("/favorite-tobaccos", response_model=list[TobaccoResponse])
+async def list_favorite_tobaccos(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Tobacco)
+        .join(UserFavoriteTobacco, UserFavoriteTobacco.tobacco_id == Tobacco.id)
+        .where(UserFavoriteTobacco.user_id == current_user.id, Tobacco.deleted_at.is_(None))
+        .order_by(func.lower(Tobacco.name))
+    )
+    tobaccos = result.scalars().all()
+    for tobacco in tobaccos:
+        setattr(tobacco, "is_favorite", True)
+    return tobaccos
+
+
+@router.post("/favorite-tobaccos/{tobacco_id}", response_model=list[TobaccoResponse])
+async def add_favorite_tobacco(
+    tobacco_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tobacco = await db.get(Tobacco, tobacco_id)
+    if not tobacco or tobacco.deleted_at:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    existing = await db.scalar(
+        select(UserFavoriteTobacco.id).where(
+            UserFavoriteTobacco.user_id == current_user.id,
+            UserFavoriteTobacco.tobacco_id == tobacco_id,
+        )
+    )
+    if not existing:
+        db.add(UserFavoriteTobacco(user_id=current_user.id, tobacco_id=tobacco_id))
+        await db.commit()
+    return await list_favorite_tobaccos(db, current_user)
+
+
+@router.delete("/favorite-tobaccos/{tobacco_id}", response_model=list[TobaccoResponse])
+async def remove_favorite_tobacco(
+    tobacco_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    favorite = await db.scalar(
+        select(UserFavoriteTobacco).where(
+            UserFavoriteTobacco.user_id == current_user.id,
+            UserFavoriteTobacco.tobacco_id == tobacco_id,
+        )
+    )
+    if favorite:
+        await db.delete(favorite)
+        await db.commit()
+    return await list_favorite_tobaccos(db, current_user)

@@ -26,6 +26,11 @@ from app.schemas.shisha import (
     BowlSetupVersionResponse,
     CoalPlacementCreate,
     CoalPlacementResponse,
+    ContributorCreate,
+    ReportCreate,
+    ReportResponse,
+    ReviewReplyCreate,
+    ReviewReplyResponse,
 )
 
 router = APIRouter()
@@ -249,6 +254,26 @@ async def feature_bowl_setup(
     return await crud.set_setup_featured(db, item_id, featured)
 
 
+@router.post("/bowl-setups/{item_id}/contributors", response_model=BowlSetupResponse)
+async def add_bowl_setup_contributor(
+    item_id: uuid.UUID,
+    item: ContributorCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.add_setup_contributor(db, item_id, item.nickname, user)
+
+
+@router.delete("/bowl-setups/{item_id}/contributors/{user_id}", response_model=BowlSetupResponse)
+async def remove_bowl_setup_contributor(
+    item_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.remove_setup_contributor(db, item_id, user_id, user)
+
+
 @router.delete("/bowl-setups/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_bowl_setup(
     item_id: uuid.UUID,
@@ -281,6 +306,47 @@ async def create_bowl_setup_review(
     user: User = Depends(get_current_user),
 ):
     return await crud.create_setup_review(db, item_id, item, user)
+
+
+@router.get(
+    "/bowl-setups/{item_id}/reviews/{review_id}/replies",
+    response_model=list[ReviewReplyResponse],
+)
+async def get_bowl_setup_review_replies(
+    item_id: uuid.UUID,
+    review_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    return await crud.get_review_replies(db, item_id, review_id)
+
+
+@router.post(
+    "/bowl-setups/{item_id}/reviews/{review_id}/replies",
+    response_model=ReviewReplyResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_bowl_setup_review_reply(
+    item_id: uuid.UUID,
+    review_id: uuid.UUID,
+    item: ReviewReplyCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.create_review_reply(db, item_id, review_id, item, user)
+
+
+@router.delete(
+    "/bowl-setups/{item_id}/reviews/{review_id}/replies/{reply_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_bowl_setup_review_reply(
+    item_id: uuid.UUID,
+    review_id: uuid.UUID,
+    reply_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await crud.delete_review_reply(db, item_id, review_id, reply_id, user)
 
 
 @router.patch(
@@ -403,3 +469,12 @@ async def delete_bowl_setup_comment(
     user: User = Depends(get_current_user),
 ):
     await crud.delete_setup_comment(db, item_id, comment_id, user)
+
+
+@router.post("/reports", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
+async def report_content(
+    item: ReportCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await crud.create_report(db, item, user)
