@@ -96,12 +96,10 @@ def build_media_url(request: Request, object_name: str) -> str:
     )
     if settings.MINIO_PUBLIC_URL:
         return f"{settings.MINIO_PUBLIC_URL.rstrip('/')}/{encoded_name}"
+    if not settings.API_PUBLIC_URL:
+        return f"/api/v1/upload/media/{encoded_name}"
 
-    base_url = settings.API_PUBLIC_URL or str(request.base_url).rstrip("/")
-    encoded_name = "/".join(
-        urllib.parse.quote(part, safe="") for part in object_name.split("/")
-    )
-    return f"{base_url}/api/v1/upload/media/{encoded_name}"
+    return f"{settings.API_PUBLIC_URL.rstrip('/')}/api/v1/upload/media/{encoded_name}"
 
 
 def upload_file(object_name: str, content_type: str, content: bytes) -> None:

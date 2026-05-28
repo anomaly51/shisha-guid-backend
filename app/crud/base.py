@@ -85,7 +85,11 @@ async def update_item_for_user(
     item = await get_by_id(db, model, item_id)
     if item.creator_id != user.id and user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    data = _promote_photo_urls(model, schema.model_dump(exclude_unset=True))
+    data = _promote_photo_urls_for_user(
+        model,
+        schema.model_dump(exclude_unset=True),
+        user.id,
+    )
     for key, value in data.items():
         setattr(item, key, value)
     await db.commit()

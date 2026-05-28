@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta
 
@@ -39,6 +40,7 @@ from app.models.user import Notification, SetupBookmark, User, UserFollow
 from app.utils.strength import STRENGTH_RANGES, clamp as _clamp, get_tobacco_strength
 
 
+logger = logging.getLogger(__name__)
 VIEW_INTERVAL = timedelta(minutes=30)
 
 AUTO_BADGES = {
@@ -51,7 +53,10 @@ AUTO_BADGES = {
 
 async def _send_email_async(to: str, subject: str, body: str) -> None:
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, send_email, to, subject, body)
+    try:
+        await loop.run_in_executor(None, send_email, to, subject, body)
+    except Exception:
+        logger.exception("Failed to send notification email")
 
 
 def get_setup_heaviness(setup: BowlSetup) -> float:
@@ -840,11 +845,12 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
         **schema.model_dump(),
     )
     db.add(review)
+    await db.flush()
     _touch_user_activity(user, score_delta=2, publish_activity=True)
     review_count = await db.scalar(
         select(func.count(BowlSetupReview.id)).where(BowlSetupReview.creator_id == user.id)
     )
-    if int(review_count or 0) == 0:
+    if int(review_count or 0) <= 1:
         _award_badge(user, "first_review")
     db.add(user)
     if setup.creator_id != user.id:
@@ -864,7 +870,6 @@ async def create_setup_review(db: AsyncSession, setup_id: uuid.UUID, schema, use
                 "New review on your ShishaGuid setup",
                 f"{user.display_name} (/users/{user.id}) reviewed your setup \"{setup.name}\".",
             )
-    await db.flush()
     await _refresh_setup_rating(db, setup_id)
     await db.commit()
     result = await db.execute(
