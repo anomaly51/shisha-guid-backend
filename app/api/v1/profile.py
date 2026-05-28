@@ -3,7 +3,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -401,10 +401,10 @@ async def mark_notifications_read(
 
 @router.get("/notifications/stream")
 async def stream_notifications(
-    token: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
 ):
-    if not token and authorization and authorization.lower().startswith("bearer "):
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)

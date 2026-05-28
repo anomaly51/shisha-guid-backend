@@ -87,6 +87,8 @@ async def exchange_google_token(
             last_seen_at=datetime.utcnow(),
         )
     else:
+        if user.is_banned:
+            raise HTTPException(status_code=403, detail="User account is banned")
         user.last_seen_at = datetime.utcnow()
         if not user.avatar_url and user_info.get("picture"):
             user.avatar_url = user_info.get("picture")
@@ -96,9 +98,6 @@ async def exchange_google_token(
     db.add(user)
     await db.commit()
     await db.refresh(user)
-
-    if user.is_banned:
-        raise HTTPException(status_code=403, detail="User account is banned")
 
     return {
         "access_token": create_access_token(data={"sub": str(user.id)}),

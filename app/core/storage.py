@@ -147,6 +147,38 @@ def _validate_stored_image(object_path: str) -> None:
             response.release_conn()
 
 
+def _configured_media_prefixes() -> list[str]:
+    prefixes: list[str] = []
+    if settings.MINIO_PUBLIC_URL:
+        prefixes.append(settings.MINIO_PUBLIC_URL.rstrip("/") + "/")
+    if settings.API_PUBLIC_URL:
+        prefixes.append(
+            settings.API_PUBLIC_URL.rstrip("/") + "/api/v1/upload/media/"
+        )
+
+    protocol = "https" if settings.MINIO_SECURE else "http"
+    prefixes.append(f"{protocol}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}/")
+    return prefixes
+
+
+def _is_dev_api_media_url(parsed: urllib.parse.ParseResult) -> bool:
+    return (
+        not settings.API_PUBLIC_URL
+        and parsed.scheme in {"http", "https"}
+        and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        and parsed.path.startswith("/api/v1/upload/media/")
+    )
+
+
+def is_uploaded_media_url(media_url: str) -> bool:
+    parsed = urllib.parse.urlparse(media_url)
+    if not parsed.scheme and media_url.startswith("/api/v1/upload/media/"):
+        return True
+    if _is_dev_api_media_url(parsed):
+        return True
+    return any(media_url.startswith(prefix) for prefix in _configured_media_prefixes())
+
+
 def extract_object_path(media_url: str) -> str:
     parsed = urllib.parse.urlparse(media_url)
     object_path = urllib.parse.unquote(parsed.path.lstrip("/"))
@@ -162,42 +194,18 @@ def extract_object_path(media_url: str) -> str:
     return object_path
 
 
-def _is_allowed_media_url(media_url: str) -> bool:
-    parsed = urllib.parse.urlparse(media_url)
-    if not parsed.scheme and media_url.startswith("/api/v1/upload/media/"):
-        return True
-    if parsed.scheme in {"http", "https"} and parsed.path.startswith("/api/v1/upload/media/"):
-        return True
-
-    allowed_prefixes = []
-    if settings.MINIO_PUBLIC_URL:
-        allowed_prefixes.append(settings.MINIO_PUBLIC_URL.rstrip("/") + "/")
-    if settings.API_PUBLIC_URL:
-        allowed_prefixes.append(
-            settings.API_PUBLIC_URL.rstrip("/") + "/api/v1/upload/media/"
-        )
-
-    if not allowed_prefixes:
-        protocol = "https" if settings.MINIO_SECURE else "http"
-        allowed_prefixes.append(
-            f"{protocol}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}/"
-        )
-
-    return any(media_url.startswith(prefix) for prefix in allowed_prefixes)
-
-
 def promote_file(
     temp_url: str,
     permanent_folder: str,
     expected_user_id: str | None = None,
 ) -> str:
-    if "/temp/" not in temp_url:
-        return temp_url
-    if not _is_allowed_media_url(temp_url):
+    if not is_uploaded_media_url(temp_url):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Temporary media URL does not belong to this storage bucket",
+            detail="Media URL does not belong to this storage bucket",
         )
+    if "/temp/" not in temp_url:
+        return temp_url
 
     object_path = extract_object_path(temp_url)
     path_parts = object_path.split("/")

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.core.config import settings
+from app.core.storage import is_uploaded_media_url
 from app.schemas.user import UserBadge
 
 
@@ -214,15 +214,9 @@ class BowlSetupBase(BaseModel):
     @field_validator("photo_urls")
     @classmethod
     def validate_photo_urls(cls, value: list[str]):
-        minio_public_url = (settings.MINIO_PUBLIC_URL or "").rstrip("/")
         for url in value:
-            if url.startswith("/api/v1/upload/media/"):
-                continue
-            if "/api/v1/upload/media/" in url:
-                continue
-            if minio_public_url and url.startswith(f"{minio_public_url}/"):
-                continue
-            raise ValueError("photo_urls must point to uploaded ShishaGuid media")
+            if not is_uploaded_media_url(url):
+                raise ValueError("photo_urls must point to uploaded ShishaGuid media")
         return value
 
     @field_validator("tags")

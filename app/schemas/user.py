@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
+from app.core.storage import is_uploaded_media_url
+
 ROLE_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
 BADGE_EFFECT_PATTERN = r"^(none|frost|fire|chemical|electric|cosmic|shimmer)$"
 BADGE_COLOR_PATTERN = r"^#[0-9A-Fa-f]{6}$"
@@ -72,6 +74,15 @@ class UserProfileUpdate(BaseModel):
         if len(normalized) > 40:
             raise ValueError("Nickname must be 40 characters or fewer")
         return normalized
+
+    @field_validator("avatar_url")
+    @classmethod
+    def validate_avatar_url(cls, value: str | None):
+        if value is None:
+            return None
+        if not is_uploaded_media_url(value):
+            raise ValueError("avatar_url must point to uploaded ShishaGuid media")
+        return value
 
 
 class AdminUserResponse(UserProfileResponse):
