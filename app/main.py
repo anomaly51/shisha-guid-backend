@@ -73,6 +73,15 @@ async def add_public_cache_headers(request: Request, call_next):
             return response
 
         path = request.url.path
+        is_authenticated_request = bool(request.headers.get("authorization"))
+        if is_authenticated_request and path.startswith("/api/v1/shisha/"):
+            response.headers["Cache-Control"] = "private, no-store"
+            if "ETag" in response.headers:
+                del response.headers["ETag"]
+            if "Last-Modified" in response.headers:
+                del response.headers["Last-Modified"]
+            return response
+
         if path.startswith("/api/v1/shisha/") or path.startswith("/api/v1/upload/media/"):
             response.headers.setdefault(
                 "Cache-Control",

@@ -321,6 +321,7 @@ async def get_setups_page(
         selectinload(BowlSetup.creator),
         selectinload(BowlSetup.contributors).selectinload(BowlSetupContributor.user),
     )
+    query = query.join(User, User.id == BowlSetup.creator_id).where(User.is_banned.is_(False))
 
     if selected_tobacco_ids:
         matching_setup_ids = (
