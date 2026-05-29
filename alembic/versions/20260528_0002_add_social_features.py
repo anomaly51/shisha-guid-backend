@@ -14,6 +14,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ")
+    op.execute("ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS source_setup_id UUID REFERENCES bowl_setups(id)")
     op.execute(
         """
         CREATE TABLE IF NOT EXISTS bowl_setup_comments (
@@ -53,4 +54,5 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ix_bowl_setup_comments_setup_created")
     op.execute("DROP TABLE IF EXISTS bowl_setup_likes")
     op.execute("DROP TABLE IF EXISTS bowl_setup_comments")
+    op.execute("ALTER TABLE bowl_setups DROP COLUMN IF EXISTS source_setup_id")
     op.execute("ALTER TABLE users DROP COLUMN IF EXISTS last_seen_at")

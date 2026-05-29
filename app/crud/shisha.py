@@ -14,15 +14,6 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.storage import extract_object_path, promote_file
 from app.core.email import send_email
-from app.crud.base import (
-    create_item,
-    delete_item,
-    delete_item_for_user,
-    get_all,
-    get_by_id,
-    update_item,
-    update_item_for_user,
-)
 from app.models.shisha import (
     BowlSetup,
     BowlSetupComment,

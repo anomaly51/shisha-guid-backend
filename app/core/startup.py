@@ -29,6 +29,9 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT false",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS badges JSON NOT NULL DEFAULT '[]'",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_days INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE users ALTER COLUMN badges TYPE JSONB USING badges::jsonb",
             "UPDATE users SET badges = '[]'::jsonb WHERE badges IS NULL OR jsonb_typeof(badges) <> 'array'",
             "ALTER TABLE bowl_setups ADD COLUMN IF NOT EXISTS views_count INTEGER NOT NULL DEFAULT 0",
@@ -208,6 +211,15 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS bowl_setup_contributors (
+                id UUID PRIMARY KEY,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_setup_contributor_user UNIQUE (bowl_setup_id, user_id)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS bowl_setup_comments (
                 id UUID PRIMARY KEY,
                 bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
@@ -223,6 +235,54 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
                 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 created_at TIMESTAMPTZ DEFAULT now(),
                 CONSTRAINT uq_bowl_setup_like_user UNIQUE (bowl_setup_id, user_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS setup_collections (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(80) NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_setup_collection_user_name UNIQUE (user_id, name)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS setup_collection_items (
+                id UUID PRIMARY KEY,
+                collection_id UUID NOT NULL REFERENCES setup_collections(id) ON DELETE CASCADE,
+                bowl_setup_id UUID NOT NULL REFERENCES bowl_setups(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_collection_setup UNIQUE (collection_id, bowl_setup_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS review_replies (
+                id UUID PRIMARY KEY,
+                review_id UUID NOT NULL REFERENCES bowl_setup_reviews(id) ON DELETE CASCADE,
+                creator_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                body TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                id UUID PRIMARY KEY,
+                target_type VARCHAR(32) NOT NULL,
+                target_id UUID NOT NULL,
+                reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                status VARCHAR(24) NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMPTZ DEFAULT now(),
+                resolved_at TIMESTAMPTZ
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_favorite_tobaccos (
+                id UUID PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                tobacco_id UUID NOT NULL REFERENCES tobaccos(id) ON DELETE CASCADE,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_user_favorite_tobacco UNIQUE (user_id, tobacco_id)
             )
             """,
         ):
@@ -248,8 +308,19 @@ async def bootstrap_database(engine: AsyncEngine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_comments_creator_id ON bowl_setup_comments (creator_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_likes_setup_id ON bowl_setup_likes (bowl_setup_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setup_likes_user_id ON bowl_setup_likes (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_setup_contributors_setup ON bowl_setup_contributors (bowl_setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_setup_contributors_user ON bowl_setup_contributors (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_setup_collections_user ON setup_collections (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_setup_collection_items_setup ON setup_collection_items (bowl_setup_id)",
+            "CREATE INDEX IF NOT EXISTS ix_review_replies_review_created ON review_replies (review_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_reports_status_created ON reports (status, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_reports_target ON reports (target_type, target_id)",
+            "CREATE INDEX IF NOT EXISTS ix_user_favorite_tobaccos_user ON user_favorite_tobaccos (user_id)",
+            "CREATE INDEX IF NOT EXISTS ix_user_favorite_tobaccos_tobacco ON user_favorite_tobaccos (tobacco_id)",
             "CREATE INDEX IF NOT EXISTS ix_bowl_setups_source_setup_id ON bowl_setups (source_setup_id)",
             "CREATE INDEX IF NOT EXISTS ix_users_last_seen_at ON users (last_seen_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_users_last_active_at ON users (last_active_at DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_users_score ON users (score DESC)",
             "CREATE INDEX IF NOT EXISTS ix_users_role ON users (role)",
             "CREATE INDEX IF NOT EXISTS ix_users_badges_gin ON users USING GIN (badges)",
             "CREATE INDEX IF NOT EXISTS ix_tobaccos_deleted_at ON tobaccos (deleted_at)",
