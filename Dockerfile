@@ -21,5 +21,6 @@ ARG VCS_REF
 ENV APP_VERSION=$APP_VERSION
 ENV BUILD_DATE=$BUILD_DATE
 ENV VCS_REF=$VCS_REF
+RUN printf '%s\n' "$BUILD_DATE" > /code/.build-date
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
