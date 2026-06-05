@@ -63,5 +63,18 @@ jobs:
             revision: .status.sync.revision,
             images: .status.summary.images,
             conditions: .status.conditions,
-            operationState: .status.operationState.phase
+            operationState: .status.operationState.phase,
+            unhealthyResources: [
+              .status.resources[]?
+              | select((.health.status // "Missing") != "Healthy")
+              | {
+                  group,
+                  kind,
+                  namespace,
+                  name,
+                  status,
+                  health: .health.status,
+                  message: .health.message
+                }
+            ]
           }' <<< "$app_json"
