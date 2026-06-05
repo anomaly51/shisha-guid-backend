@@ -162,7 +162,6 @@ async def health():
             "response": "ok",
             "status": "ok" if healthy else "degraded",
             "checks": checks,
-            "smoke": "ci",
         },
         status_code=200 if healthy else 503,
     )
