@@ -91,6 +91,10 @@ jobs:
           push: false
           load: true
           tags: ${{ steps.meta.outputs.image_ref }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.image_tag }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            VCS_REF=${{ github.sha }}
 
       - name: Build image with registry cache
         if: github.event_name != 'pull_request' && steps.image_exists.outputs.exists != 'true'
@@ -103,6 +107,10 @@ jobs:
           tags: ${{ steps.meta.outputs.image_ref }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
           cache-to: type=registry,ref=${{ steps.meta.outputs.cache_ref }},mode=max
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.image_tag }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+            VCS_REF=${{ github.sha }}
 
   verify-deploy:
     name: Verify deploy

@@ -15,4 +15,11 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then poetry install --no-root; else poetry i
 
 COPY ./app /code/app
 
+ARG APP_VERSION
+ARG BUILD_DATE
+ARG VCS_REF
+ENV APP_VERSION=$APP_VERSION
+ENV BUILD_DATE=$BUILD_DATE
+ENV VCS_REF=$VCS_REF
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
