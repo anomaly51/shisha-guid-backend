@@ -159,7 +159,7 @@ async def health():
 
     return JSONResponse(
         {
-            "response": "ok-v2",
+            "response": "ok",
             "status": "ok" if healthy else "degraded",
             "checks": checks,
         },
