@@ -78,3 +78,5 @@ jobs:
                 }
             ]
           }' <<< "$app_json"
+          argocd app resources "$ARGOCD_APPLICATION" --server "$ARGOCD_SERVER" "${argocd_common[@]}" || true
+          argocd app logs "$ARGOCD_APPLICATION" --kind Deployment --name backend --container app --tail 120 --server "$ARGOCD_SERVER" "${argocd_common[@]}" || true
