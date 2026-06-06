@@ -326,6 +326,7 @@ async def get_setups_page(
     query = select(BowlSetup).options(
         selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
         selectinload(BowlSetup.creator),
+        selectinload(BowlSetup.bowl),
         selectinload(BowlSetup.contributors).selectinload(BowlSetupContributor.user),
     )
     query = query.join(User, User.id == BowlSetup.creator_id).where(User.is_banned.is_(False))
@@ -413,6 +414,7 @@ async def get_setup_by_id(
         select(BowlSetup)
         .options(
             selectinload(BowlSetup.tobaccos).selectinload(BowlSetupTobacco.tobacco),
+            selectinload(BowlSetup.bowl),
             selectinload(BowlSetup.creator),
             selectinload(BowlSetup.contributors).selectinload(BowlSetupContributor.user),
         )

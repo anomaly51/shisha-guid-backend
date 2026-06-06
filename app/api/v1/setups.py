@@ -44,6 +44,15 @@ def _ensure_public_setup(setup: BowlSetup) -> BowlSetup:
     return setup
 
 
+async def get_public_setup(
+    item_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_current_user),
+) -> BowlSetup:
+    setup = await crud.get_setup_by_id(db, item_id, user.id if user else None)
+    return _ensure_public_setup(setup)
+
+
 @router.get("/coal-placements", response_model=list[CoalPlacementResponse])
 async def get_coal_placements(
     limit: int = Query(default=500, ge=1, le=500),
@@ -236,7 +245,7 @@ async def record_bowl_setup_view(
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_optional_current_user),
 ):
-    setup = await crud.get_setup_by_id(db, item_id)
+    setup = await crud.get_setup_by_id(db, item_id, user.id if user else None)
     _ensure_public_setup(setup)
     return await crud.record_setup_view(
         db,
@@ -304,8 +313,8 @@ async def get_bowl_setup_reviews(
     limit: int | None = Query(default=None, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.get_setup_reviews(db, item_id, limit=limit, offset=offset)
 
 
@@ -319,8 +328,8 @@ async def create_bowl_setup_review(
     item: BowlSetupReviewCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.create_setup_review(db, item_id, item, user)
 
 
@@ -332,8 +341,8 @@ async def get_bowl_setup_review_replies(
     item_id: uuid.UUID,
     review_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.get_review_replies(db, item_id, review_id)
 
 
@@ -348,8 +357,8 @@ async def create_bowl_setup_review_reply(
     item: ReviewReplyCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.create_review_reply(db, item_id, review_id, item, user)
 
 
@@ -420,8 +429,8 @@ async def bookmark_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.set_setup_bookmark(db, item_id, user, True)
 
 
@@ -430,8 +439,8 @@ async def unbookmark_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.set_setup_bookmark(db, item_id, user, False)
 
 
@@ -440,8 +449,8 @@ async def like_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.set_setup_like(db, item_id, user, True)
 
 
@@ -450,8 +459,8 @@ async def unlike_bowl_setup(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.set_setup_like(db, item_id, user, False)
 
 
@@ -462,8 +471,8 @@ async def unlike_bowl_setup(
 async def get_bowl_setup_comments(
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.get_setup_comments(db, item_id)
 
 
@@ -477,8 +486,8 @@ async def create_bowl_setup_comment(
     item: BowlSetupCommentCreate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
+    _setup: BowlSetup = Depends(get_public_setup),
 ):
-    _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
     return await crud.create_setup_comment(db, item_id, item, user)
 
 

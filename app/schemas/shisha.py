@@ -253,6 +253,7 @@ class BowlSetupResponse(BowlSetupBase):
     id: UUID4
     creator_id: UUID4
     creator: PublicCreatorResponse | None = None
+    bowl: BowlResponse | None = None
     created_at: datetime
     tags: list[str] = Field(default_factory=list)
     is_featured: bool = False
