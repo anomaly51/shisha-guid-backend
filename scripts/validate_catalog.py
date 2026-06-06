@@ -79,9 +79,10 @@ def has_pack_count_in_name(name: str) -> bool:
 
 def validate_catalog(catalog: dict[str, list[dict]]) -> list[str]:
     warnings: list[str] = []
-    seen_names: dict[str, str] = {}
+    seen_names: dict[str, dict[str, str]] = {}
 
     for section, items in catalog.items():
+        section_seen = seen_names.setdefault(section, {})
         for item in items:
             name = item.get("name") or ""
             normalized_name = name.casefold().strip()
@@ -89,11 +90,12 @@ def validate_catalog(catalog: dict[str, list[dict]]) -> list[str]:
 
             if not name.strip():
                 warnings.append(f"{section}:{item_id}: empty name")
-            if normalized_name in seen_names:
+            if normalized_name and normalized_name in section_seen:
                 warnings.append(
-                    f"{section}:{item_id}: duplicate name with {seen_names[normalized_name]}: {name}"
+                    f"{section}:{item_id}: duplicate name with {section_seen[normalized_name]}: {name}"
                 )
-            seen_names[normalized_name] = f"{section}:{item_id}"
+            if normalized_name:
+                section_seen[normalized_name] = f"{section}:{item_id}"
 
             if has_price_in_name(name):
                 warnings.append(f"{section}:{item_id}: price in name: {name}")

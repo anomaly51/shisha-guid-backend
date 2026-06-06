@@ -90,16 +90,48 @@ def generate_presigned_policy(object_name: str, content_type: str):
     return url, form_data
 
 
-def build_media_url(request: Request, object_name: str) -> str:
+def _build_media_url(object_name: str) -> str:
     encoded_name = "/".join(
         urllib.parse.quote(part, safe="") for part in object_name.split("/")
     )
     if settings.MINIO_PUBLIC_URL:
         return f"{settings.MINIO_PUBLIC_URL.rstrip('/')}/{encoded_name}"
-    if not settings.API_PUBLIC_URL:
-        return f"/api/v1/upload/media/{encoded_name}"
+    if settings.API_PUBLIC_URL:
+        return f"{settings.API_PUBLIC_URL.rstrip('/')}/api/v1/upload/media/{encoded_name}"
+    return f"/api/v1/upload/media/{encoded_name}"
 
-    return f"{settings.API_PUBLIC_URL.rstrip('/')}/api/v1/upload/media/{encoded_name}"
+
+def build_media_url(request: Request, object_name: str) -> str:
+    return _build_media_url(object_name)
+
+
+def duplicate_uploaded_media_url(
+    media_url: str,
+    permanent_folder: str,
+    owner_id: str,
+    target_name: str | None = None,
+) -> str:
+    if not is_uploaded_media_url(media_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Media URL does not belong to this storage bucket",
+        )
+
+    object_path = extract_object_path(media_url)
+    path_parts = object_path.split("/")
+    if len(path_parts) < 3:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+    source_object_path = object_path
+    file_name = target_name or path_parts[-1]
+    new_object_path = f"{owner_id}/{permanent_folder}/{file_name}"
+
+    minio_client.copy_object(
+        settings.MINIO_BUCKET,
+        new_object_path,
+        CopySource(settings.MINIO_BUCKET, source_object_path),
+    )
+    return _build_media_url(new_object_path)
 
 
 def upload_file(object_name: str, content_type: str, content: bytes) -> None:
@@ -125,8 +157,8 @@ def _validate_stored_image(object_path: str) -> None:
         stat = minio_client.stat_object(settings.MINIO_BUCKET, object_path)
         if stat.content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
-        response = minio_client.get_object(settings.MINIO_BUCKET, object_path, offset=0, length=16)
-        detected = detect_image_content_type(response.read(16))
+        response = minio_client.get_object(settings.MINIO_BUCKET, object_path, offset=0, length=32)
+        detected = detect_image_content_type(response.read(32))
         if detected != stat.content_type:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

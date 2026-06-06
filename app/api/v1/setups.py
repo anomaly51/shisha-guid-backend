@@ -152,7 +152,7 @@ async def delete_bowl_setup_type(
     await catalog_cache.clear_prefix("bowl-setup-types:")
 
 
-@router.get("/bowl-setups", response_model=list[BowlSetupResponse] | BowlSetupPageResponse)
+@router.get("/bowl-setups", response_model=BowlSetupPageResponse)
 async def get_bowl_setups(
     tobacco_ids: list[uuid.UUID] = Query(default_factory=list),
     tags: list[str] = Query(default_factory=list),
@@ -179,27 +179,13 @@ async def get_bowl_setups(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     bookmarked_by = user.id if bookmarked and user else None
     followed_by = user.id if following and user else None
-    if limit is not None:
-        return await crud.get_setups_page(
-            db,
-            tobacco_ids,
-            strength,
-            sort,
-            limit,
-            offset,
-            search=search,
-            creator_id=creator_id,
-            bookmarked_by=bookmarked_by,
-            followed_by=followed_by,
-            user_id=user.id if user else None,
-            period=period,
-            tags=tags,
-        )
-    return await crud.get_all_setups(
+    return await crud.get_setups_page(
         db,
         tobacco_ids,
         strength,
         sort,
+        limit or 50,
+        offset,
         search=search,
         creator_id=creator_id,
         bookmarked_by=bookmarked_by,
@@ -315,10 +301,12 @@ async def delete_bowl_setup(
 )
 async def get_bowl_setup_reviews(
     item_id: uuid.UUID,
+    limit: int | None = Query(default=None, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     _ensure_public_setup(await crud.get_setup_by_id(db, item_id))
-    return await crud.get_setup_reviews(db, item_id)
+    return await crud.get_setup_reviews(db, item_id, limit=limit, offset=offset)
 
 
 @router.post(

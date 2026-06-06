@@ -7,6 +7,7 @@ from fastapi import HTTPException, Request, status
 from app.core.config import settings
 
 _buckets: dict[str, deque[float]] = defaultdict(deque)
+_last_prune_at = 0.0
 
 
 def _client_key(request: Request, scope: str) -> str:
@@ -21,6 +22,7 @@ def _client_key(request: Request, scope: str) -> str:
 
 
 async def enforce_rate_limit(request: Request, scope: str, limit: int) -> None:
+    global _last_prune_at
     now = time.monotonic()
     window = settings.RATE_LIMIT_WINDOW_SECONDS
     bucket = _buckets[_client_key(request, scope)]
@@ -37,7 +39,9 @@ async def enforce_rate_limit(request: Request, scope: str, limit: int) -> None:
 
     bucket.append(now)
 
-    if len(_buckets) > 10000:
+    should_prune = now - _last_prune_at >= window or len(_buckets) > 10000
+    if should_prune:
+        _last_prune_at = now
         for key, values in list(_buckets.items()):
             while values and values[0] <= now - window:
                 values.popleft()

@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import load_only
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.user import User
@@ -74,7 +75,11 @@ async def _get_user_from_token(
     except jwt.PyJWTError:
         raise credentials_exception
         
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(
+        select(User)
+        .options(load_only(User.id, User.role, User.is_banned))
+        .where(User.id == user_id)
+    )
     user = result.scalars().first()
     if user is None:
         raise credentials_exception
@@ -105,6 +110,8 @@ async def get_optional_current_user(
         return None
     try:
         return await _get_user_from_token(token, db)
+    except jwt.ExpiredSignatureError:
+        return None
     except HTTPException as exc:
         if exc.status_code == status.HTTP_403_FORBIDDEN:
             raise

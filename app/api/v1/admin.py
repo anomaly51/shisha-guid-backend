@@ -4,7 +4,7 @@ import html
 import hashlib
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -164,8 +164,13 @@ async def update_user(
             detail="Admin cannot demote or ban their own account",
         )
 
-    if "nickname" in payload.model_fields_set and payload.nickname:
+    if "nickname" in payload.model_fields_set and payload.nickname is not None:
         payload.nickname = " ".join(payload.nickname.split())
+        if len(payload.nickname) < 2 or len(payload.nickname) > 30:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Nickname must be between 2 and 30 characters",
+            )
         result = await db.execute(
             select(User.id).where(
                 func.lower(User.nickname) == payload.nickname.lower(),
@@ -196,14 +201,18 @@ async def update_user(
 
 
 @router.get("/content")
-async def list_content(db: AsyncSession = Depends(get_db)):
+async def list_content(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
     content = {}
     for key, model in CONTENT_MODELS.items():
         query = select(model)
         if hasattr(model, "deleted_at"):
             query = query.where(model.deleted_at.is_(None))
         result = await db.execute(
-            query.order_by(model.created_at.desc()).limit(50)
+            query.order_by(model.created_at.desc()).offset(offset).limit(limit)
         )
         content[key] = [
             {

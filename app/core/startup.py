@@ -16,12 +16,23 @@ CATALOG_TABLES = (
 )
 
 
+async def _has_alembic_history(conn) -> bool:
+    table_result = await conn.execute(text("SELECT to_regclass('public.alembic_version')"))
+    table_name = table_result.scalar_one_or_none()
+    if not table_name:
+        return False
+    version_result = await conn.execute(text("SELECT 1 FROM alembic_version LIMIT 1"))
+    return version_result.scalar_one_or_none() is not None
+
+
 async def bootstrap_database(engine: AsyncEngine) -> None:
     if not settings.RUN_SCHEMA_BOOTSTRAP:
         return
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if await _has_alembic_history(conn):
+            return
 
         for statement in (
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR",

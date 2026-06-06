@@ -35,35 +35,82 @@ from app.schemas.user import (
 router = APIRouter()
 
 
+async def _load_public_user_stats(
+    db: AsyncSession,
+    users: list[User],
+    viewer: User | None,
+) -> dict[uuid.UUID, dict[str, int | bool]]:
+    stats: dict[uuid.UUID, dict[str, int | bool]] = {
+        user.id: {
+            "setups_count": 0,
+            "followers_count": 0,
+            "following_count": 0,
+            "is_following": False,
+            "is_followed_by": False,
+        }
+        for user in users
+    }
+    if not stats:
+        return stats
+
+    user_ids = list(stats)
+
+    setups_result = await db.execute(
+        select(BowlSetup.creator_id, func.count(BowlSetup.id))
+        .where(BowlSetup.creator_id.in_(user_ids))
+        .group_by(BowlSetup.creator_id)
+    )
+    for user_id, count in setups_result.all():
+        stats[user_id]["setups_count"] = int(count)
+
+    followers_result = await db.execute(
+        select(UserFollow.followed_id, func.count(UserFollow.id))
+        .where(UserFollow.followed_id.in_(user_ids))
+        .group_by(UserFollow.followed_id)
+    )
+    for user_id, count in followers_result.all():
+        stats[user_id]["followers_count"] = int(count)
+
+    following_result = await db.execute(
+        select(UserFollow.follower_id, func.count(UserFollow.id))
+        .where(UserFollow.follower_id.in_(user_ids))
+        .group_by(UserFollow.follower_id)
+    )
+    for user_id, count in following_result.all():
+        stats[user_id]["following_count"] = int(count)
+
+    if viewer:
+        following_viewer_result = await db.execute(
+            select(UserFollow.followed_id)
+            .where(
+                UserFollow.follower_id == viewer.id,
+                UserFollow.followed_id.in_(user_ids),
+            )
+        )
+        followed_viewer_result = await db.execute(
+            select(UserFollow.follower_id)
+            .where(
+                UserFollow.followed_id == viewer.id,
+                UserFollow.follower_id.in_(user_ids),
+            )
+        )
+        for user_id in following_viewer_result.scalars().all():
+            stats[user_id]["is_following"] = True
+        for user_id in followed_viewer_result.scalars().all():
+            stats[user_id]["is_followed_by"] = True
+
+    return stats
+
+
 async def _public_user_payload(
     db: AsyncSession,
     user: User,
     viewer: User | None,
+    stats: dict[uuid.UUID, dict[str, int | bool]] | None = None,
 ) -> dict:
-    setups_count = await db.scalar(
-        select(func.count(BowlSetup.id)).where(BowlSetup.creator_id == user.id)
-    )
-    followers_count = await db.scalar(
-        select(func.count(UserFollow.id)).where(UserFollow.followed_id == user.id)
-    )
-    following_count = await db.scalar(
-        select(func.count(UserFollow.id)).where(UserFollow.follower_id == user.id)
-    )
-    is_following = False
-    is_followed_by = False
-    if viewer:
-        is_following = bool(await db.scalar(
-            select(UserFollow.id).where(
-                UserFollow.follower_id == viewer.id,
-                UserFollow.followed_id == user.id,
-            )
-        ))
-        is_followed_by = bool(await db.scalar(
-            select(UserFollow.id).where(
-                UserFollow.follower_id == user.id,
-                UserFollow.followed_id == viewer.id,
-            )
-        ))
+    user_stats = stats.get(user.id) if stats else None
+    if user_stats is None:
+        user_stats = (await _load_public_user_stats(db, [user], viewer))[user.id]
     return {
         "id": user.id,
         "nickname": user.nickname,
@@ -72,11 +119,11 @@ async def _public_user_payload(
         "role": user.role,
         "badges": user.badges,
         "last_seen_at": user.last_seen_at,
-        "setups_count": int(setups_count or 0),
-        "followers_count": int(followers_count or 0),
-        "following_count": int(following_count or 0),
-        "is_following": is_following,
-        "is_followed_by": is_followed_by,
+        "setups_count": int(user_stats["setups_count"]),
+        "followers_count": int(user_stats["followers_count"]),
+        "following_count": int(user_stats["following_count"]),
+        "is_following": bool(user_stats["is_following"]),
+        "is_followed_by": bool(user_stats["is_followed_by"]),
         "last_active_at": user.last_active_at,
         "streak_days": user.streak_days,
         "score": user.score,
@@ -183,10 +230,9 @@ async def search_public_users(
         query = query.where(User.nickname.ilike(normalized))
     query = query.order_by(func.lower(User.nickname).nullslast(), User.email).limit(safe_limit)
     result = await db.execute(query)
-    return [
-        await _public_user_payload(db, user, viewer)
-        for user in result.scalars().all()
-    ]
+    users = result.scalars().all()
+    stats = await _load_public_user_stats(db, users, viewer)
+    return [await _public_user_payload(db, user, viewer, stats) for user in users]
 
 
 @router.get("/top-authors", response_model=list[PublicUserResponse])
@@ -204,10 +250,9 @@ async def get_top_authors(
         .order_by(func.count(BowlSetup.id).desc(), func.lower(User.nickname).nullslast())
         .limit(safe_limit)
     )
-    return [
-        await _public_user_payload(db, user, viewer)
-        for user, _setups_total in result.all()
-    ]
+    users = [user for user, _setups_total in result.all()]
+    stats = await _load_public_user_stats(db, users, viewer)
+    return [await _public_user_payload(db, user, viewer, stats) for user in users]
 
 
 @router.get("/recommended-users", response_model=list[PublicUserResponse])
@@ -239,7 +284,8 @@ async def get_recommended_users(
     users = [user for user, _matches in result.all()]
     if not users:
         return await get_top_authors(safe_limit, db, current_user)
-    return [await _public_user_payload(db, user, current_user) for user in users]
+    stats = await _load_public_user_stats(db, users, current_user)
+    return [await _public_user_payload(db, user, current_user, stats) for user in users]
 
 
 @router.get("/users/{user_id}", response_model=PublicUserResponse)
@@ -272,7 +318,9 @@ async def read_public_user_followers(
         .order_by(UserFollow.created_at.desc())
         .limit(safe_limit)
     )
-    return [await _public_user_payload(db, user, viewer) for user in result.scalars().all()]
+    users = result.scalars().all()
+    stats = await _load_public_user_stats(db, users, viewer)
+    return [await _public_user_payload(db, user, viewer, stats) for user in users]
 
 
 @router.get("/users/{user_id}/following", response_model=list[PublicUserResponse])
@@ -293,7 +341,9 @@ async def read_public_user_following(
         .order_by(UserFollow.created_at.desc())
         .limit(safe_limit)
     )
-    return [await _public_user_payload(db, user, viewer) for user in result.scalars().all()]
+    users = result.scalars().all()
+    stats = await _load_public_user_stats(db, users, viewer)
+    return [await _public_user_payload(db, user, viewer, stats) for user in users]
 
 
 @router.get("/users/{user_id}/setups", response_model=BowlSetupPageResponse)
@@ -422,8 +472,8 @@ async def stream_notifications(
     async def events():
         last_id: uuid.UUID | None = None
         deadline = datetime.utcnow() + timedelta(minutes=5)
-        while datetime.utcnow() < deadline:
-            async with AsyncSessionLocal() as db:
+        async with AsyncSessionLocal() as db:
+            while datetime.utcnow() < deadline:
                 result = await db.execute(
                     select(Notification)
                     .where(Notification.user_id == current_user_id)
@@ -445,7 +495,7 @@ async def stream_notifications(
                     yield f"event: notification\ndata: {json.dumps(payload)}\n\n"
                 else:
                     yield "event: ping\ndata: {}\n\n"
-            await asyncio.sleep(15)
+                await asyncio.sleep(15)
         yield "event: close\ndata: {}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

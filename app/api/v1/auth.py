@@ -76,6 +76,8 @@ async def exchange_google_token(
 
     if not user:
         nickname = (user_info.get("name") or "").strip() or None
+        if nickname and len(nickname) > 40:
+            nickname = nickname[:40].rstrip()
         if nickname and await _nickname_exists(db, nickname):
             nickname = None
         user = User(
@@ -115,6 +117,9 @@ async def refresh_token(
 ):
     await enforce_rate_limit(request, "auth", settings.AUTH_RATE_LIMIT_PER_MINUTE)
     user = await get_user_from_refresh_token(payload.refresh_token, db)
+    user.last_seen_at = datetime.utcnow()
+    db.add(user)
+    await db.commit()
     return {
         "access_token": create_access_token(data={"sub": str(user.id)}),
         "refresh_token": create_refresh_token(data={"sub": str(user.id)}),

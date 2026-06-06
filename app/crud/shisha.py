@@ -4,15 +4,14 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException, status
-from sqlalchemy import distinct, func, update
+from sqlalchemy import distinct, func, literal, update, union_all
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.storage import extract_object_path, promote_file
+from app.core.storage import duplicate_uploaded_media_url, extract_object_path, promote_file
 from app.core.email import send_email
 from app.models.shisha import (
     BowlSetup,
@@ -140,33 +139,50 @@ async def _decorate_setups(
 
     creator_ids = {setup.creator_id for setup in setups}
     setup_ids = [setup.id for setup in setups]
-    counts_result = await db.execute(
-        select(BowlSetup.creator_id, func.count(BowlSetup.id))
+    counts_query = union_all(
+        select(
+            literal("creator").label("kind"),
+            BowlSetup.creator_id.label("entity_id"),
+            func.count(BowlSetup.id).label("count_value"),
+        )
         .where(BowlSetup.creator_id.in_(creator_ids))
-        .group_by(BowlSetup.creator_id)
-    )
-    setup_counts = {creator_id: int(count) for creator_id, count in counts_result.all()}
-
-    likes_result = await db.execute(
-        select(BowlSetupLike.bowl_setup_id, func.count(BowlSetupLike.id))
+        .group_by(BowlSetup.creator_id),
+        select(
+            literal("likes").label("kind"),
+            BowlSetupLike.bowl_setup_id.label("entity_id"),
+            func.count(BowlSetupLike.id).label("count_value"),
+        )
         .where(BowlSetupLike.bowl_setup_id.in_(setup_ids))
-        .group_by(BowlSetupLike.bowl_setup_id)
-    )
-    likes_counts = {setup_id: int(count) for setup_id, count in likes_result.all()}
-
-    comments_result = await db.execute(
-        select(BowlSetupComment.bowl_setup_id, func.count(BowlSetupComment.id))
+        .group_by(BowlSetupLike.bowl_setup_id),
+        select(
+            literal("comments").label("kind"),
+            BowlSetupComment.bowl_setup_id.label("entity_id"),
+            func.count(BowlSetupComment.id).label("count_value"),
+        )
         .where(BowlSetupComment.bowl_setup_id.in_(setup_ids))
-        .group_by(BowlSetupComment.bowl_setup_id)
-    )
-    comments_counts = {setup_id: int(count) for setup_id, count in comments_result.all()}
-
-    clones_result = await db.execute(
-        select(BowlSetup.source_setup_id, func.count(BowlSetup.id))
+        .group_by(BowlSetupComment.bowl_setup_id),
+        select(
+            literal("clones").label("kind"),
+            BowlSetup.source_setup_id.label("entity_id"),
+            func.count(BowlSetup.id).label("count_value"),
+        )
         .where(BowlSetup.source_setup_id.in_(setup_ids))
-        .group_by(BowlSetup.source_setup_id)
-    )
-    clones_counts = {setup_id: int(count) for setup_id, count in clones_result.all()}
+        .group_by(BowlSetup.source_setup_id),
+    ).subquery()
+    counts_result = await db.execute(select(counts_query.c.kind, counts_query.c.entity_id, counts_query.c.count_value))
+    setup_counts: dict[uuid.UUID, int] = {}
+    likes_counts: dict[uuid.UUID, int] = {}
+    comments_counts: dict[uuid.UUID, int] = {}
+    clones_counts: dict[uuid.UUID, int] = {}
+    for kind, entity_id, count in counts_result.all():
+        if kind == "creator":
+            setup_counts[entity_id] = int(count)
+        elif kind == "likes":
+            likes_counts[entity_id] = int(count)
+        elif kind == "comments":
+            comments_counts[entity_id] = int(count)
+        elif kind == "clones":
+            clones_counts[entity_id] = int(count)
 
     bookmarked_ids: set[uuid.UUID] = set()
     liked_ids: set[uuid.UUID] = set()
@@ -353,11 +369,6 @@ async def get_setups_page(
                 BowlSetup.heaviness_score <= strength_range[1],
             )
 
-    total_result = await db.execute(
-        select(func.count()).select_from(query.order_by(None).subquery())
-    )
-    total = total_result.scalar_one()
-
     if sort == "views":
         query = query.order_by(BowlSetup.views_count.desc(), BowlSetup.created_at.desc())
     elif sort == "rating":
@@ -377,8 +388,12 @@ async def get_setups_page(
     else:
         query = query.order_by(BowlSetup.is_featured.desc(), BowlSetup.created_at.desc())
 
-    result = await db.execute(query.offset(offset).limit(limit))
-    items = result.scalars().all()
+    result = await db.execute(
+        query.add_columns(func.count().over().label("_total")).offset(offset).limit(limit)
+    )
+    rows = result.all()
+    items = [row[0] for row in rows]
+    total = int(rows[0][1] or 0) if rows else 0
     await _decorate_setups(db, items, user_id)
     return {
         "items": items,
@@ -426,46 +441,18 @@ async def record_setup_view(
     now = now_result.scalar_one()
     cutoff = now - VIEW_INTERVAL
 
-    result = await db.execute(
-        select(BowlSetupView).where(
-            BowlSetupView.bowl_setup_id == setup.id,
-            BowlSetupView.ip_address == normalized_ip,
+    statement = (
+        insert(BowlSetupView)
+        .values(bowl_setup_id=setup.id, ip_address=normalized_ip, last_viewed_at=now)
+        .on_conflict_do_update(
+            index_elements=["bowl_setup_id", "ip_address"],
+            set_={"last_viewed_at": now},
+            where=BowlSetupView.last_viewed_at <= cutoff,
         )
+        .returning(BowlSetupView.id)
     )
-    view = result.scalars().first()
-
-    should_count = view is None or view.last_viewed_at <= cutoff
-    if not should_count:
-        return setup
-
-    counted = False
-
-    if view is None:
-        statement = (
-            insert(BowlSetupView)
-            .values(bowl_setup_id=setup.id, ip_address=normalized_ip)
-            .on_conflict_do_nothing(
-                index_elements=["bowl_setup_id", "ip_address"],
-            )
-            .returning(BowlSetupView.id)
-        )
-        try:
-            insert_result = await db.execute(statement)
-            counted = insert_result.scalar_one_or_none() is not None
-        except IntegrityError:
-            await db.rollback()
-            counted = False
-    else:
-        update_result = await db.execute(
-            update(BowlSetupView)
-            .where(
-                BowlSetupView.id == view.id,
-                BowlSetupView.last_viewed_at <= cutoff,
-            )
-            .values(last_viewed_at=now)
-            .returning(BowlSetupView.id)
-        )
-        counted = update_result.scalar_one_or_none() is not None
+    insert_result = await db.execute(statement)
+    counted = insert_result.scalar_one_or_none() is not None
 
     if not counted:
         return setup
@@ -491,29 +478,33 @@ async def create_setup(db: AsyncSession, schema, user_id: uuid.UUID):
     ]
     data["heaviness_score"] = await _calculate_heaviness_score(db, schema.tobaccos)
     setup = BowlSetup(**data, creator_id=user_id)
-    db.add(setup)
-    await db.flush()
-    for tob in schema.tobaccos:
-        db.add(
-            BowlSetupTobacco(
-                bowl_setup_id=setup.id,
-                tobacco_id=tob.tobacco_id,
-                percentage=tob.percentage,
+    try:
+        db.add(setup)
+        await db.flush()
+        for tob in schema.tobaccos:
+            db.add(
+                BowlSetupTobacco(
+                    bowl_setup_id=setup.id,
+                    tobacco_id=tob.tobacco_id,
+                    percentage=tob.percentage,
+                )
             )
-        )
-    await db.flush()
-    await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in schema.tobaccos})
-    if user:
-        setups_count = await db.scalar(
-            select(func.count(BowlSetup.id)).where(BowlSetup.creator_id == user_id)
-        )
-        _touch_user_activity(user, score_delta=10, publish_activity=True)
-        if int(setups_count or 0) >= 1:
-            _award_badge(user, "first_setup")
-        if int(setups_count or 0) >= 10:
-            _award_badge(user, "ten_setups")
-        db.add(user)
-    await db.commit()
+        await db.flush()
+        await _refresh_tobacco_setup_counts(db, {item.tobacco_id for item in schema.tobaccos})
+        if user:
+            setups_count = await db.scalar(
+                select(func.count(BowlSetup.id)).where(BowlSetup.creator_id == user_id)
+            )
+            _touch_user_activity(user, score_delta=10, publish_activity=True)
+            if int(setups_count or 0) >= 1:
+                _award_badge(user, "first_setup")
+            if int(setups_count or 0) >= 10:
+                _award_badge(user, "ten_setups")
+            db.add(user)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return await get_setup_by_id(db, setup.id)
 
 
@@ -661,13 +652,22 @@ async def delete_setup_for_user(db: AsyncSession, item_id: uuid.UUID, user):
     await db.commit()
 
 
-async def get_setup_reviews(db: AsyncSession, setup_id: uuid.UUID):
+async def get_setup_reviews(
+    db: AsyncSession,
+    setup_id: uuid.UUID,
+    limit: int | None = None,
+    offset: int = 0,
+):
     await get_setup_by_id(db, setup_id)
+    safe_limit = max(1, min(limit or 50, 50))
+    safe_offset = max(0, offset)
     result = await db.execute(
         select(BowlSetupReview)
         .options(selectinload(BowlSetupReview.creator))
         .where(BowlSetupReview.bowl_setup_id == setup_id)
         .order_by(BowlSetupReview.created_at.desc())
+        .offset(safe_offset)
+        .limit(safe_limit)
     )
     reviews = result.scalars().all()
     if reviews:
@@ -886,10 +886,15 @@ async def get_setup_versions(db: AsyncSession, setup_id: uuid.UUID, user):
 
 async def clone_setup(db: AsyncSession, setup_id: uuid.UUID, user):
     setup = await get_setup_by_id(db, setup_id)
+    clone_id = uuid.uuid4()
     clone = BowlSetup(
+        id=clone_id,
         name=f"{setup.name} copy",
         description=setup.description,
-        photo_urls=list(setup.photo_urls or []),
+        photo_urls=[
+            duplicate_uploaded_media_url(url, "bowl_setups", str(user.id), f"{clone_id}-{index}-{url.split('/')[-1]}")
+            for index, url in enumerate(setup.photo_urls or [])
+        ],
         creator_id=user.id,
         bowl_id=setup.bowl_id,
         kaloud_id=setup.kaloud_id,
