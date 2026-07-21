@@ -4,7 +4,7 @@ import os
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("SECRET_KEY", "test")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-bytes")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test")
 

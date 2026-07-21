@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
     DATABASE_URL: str
     SECRET_KEY: str
     GOOGLE_CLIENT_ID: str
@@ -47,9 +49,6 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str | None = None
     SMTP_USE_TLS: bool = True
-
-    class Config:
-        env_file = ".env"
 
     @property
     def admin_email_set(self) -> set[str]:
