@@ -25,4 +25,4 @@ ENV BUILD_DATE=$BUILD_DATE
 ENV VCS_REF=$VCS_REF
 RUN printf '%s\n' "$BUILD_DATE" > /code/.build-date
 
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python -m app.db_bootstrap && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
